@@ -2639,13 +2639,13 @@ async function backUp(url, want, had, name, seconds, any) {
   }
   throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${seconds < 120 ? seconds + ' seconds' : Math.round(seconds / 60) + ' minutes'}.`);
 }
-// 0.36.0: wait a little longer than the App Manager itself may take (wizard-app-manager#712: an update gets up to 30
+// 0.36.0: wait a little longer than the App Manager itself may take (wizard-app-manager PR 712: an update gets up to 30
 // minutes and wam waits 31m40s for it), so the Tracker never gives up on an update that is still going.
 const UPDATE_WAIT_MS = 35 * 60000;
 // ---------- 0.36.0 Start a stopped app, and recover an update that left it stopped (Robert, 15 Nov) ----------
 // A stopped app opens as a blank page, and an update leaves a stopped app stopped (the App Manager only brings back an
 // app that was running). The App Manager's owner route POST store-install/_start/<id> {} starts it (wizard-app-manager
-// #711/#713: same owner gate as Update; GET is the job: starting -> running | failed). A Wizard whose App Manager
+// issue 711, PR 713: same owner gate as Update; GET is the job: starting -> running | failed). A Wizard whose App Manager
 // predates that route answers 'bad app id' (400) or 'not found' (404): that is said plainly, never guessed around.
 const STOPPED = new Set(['stopped', 'start_error', 'stop_error', 'update_error', 'restart_error']);
 const isStopped = a => !!a && STOPPED.has(a.status);
