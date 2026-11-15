@@ -157,7 +157,7 @@ class Page(unittest.TestCase):
 
     def test_versions_agree(self):
         v = S.VERSION
-        self.assertEqual(v, '0.35.0')
+        self.assertTrue(v.startswith('0.35.'))
         self.assertIn(f"PAGE_VERSION = '{v}'", JS)
         self.assertIn(f"version: '{v}' }})", JS)
         self.assertIn(f'**{v}**', (ROOT / 'wizard.md').read_text())

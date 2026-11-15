@@ -330,7 +330,7 @@ function freshness() {
   r.setAttribute('aria-busy', String(inflight > 0));
   // 0.33: the tools row shows the refresh only while it runs or when the list is old; Refresh now is in the ⋯ menu
   const quiet = () => { r.hidden = f.hidden = !(me && me.connected) || !(inflight > 0 || f.classList.contains('stale')); };
-  if (inflight > 0) { f.textContent = 'updating…'; return quiet(); }
+  if (inflight > 0) { f.textContent = 'refreshing…'; return quiet(); }   // 0.35.1: the list reloading, not an app update
   if (!freshAt) { f.textContent = ''; return quiet(); }
   const s = Math.round((Date.now() - freshAt) / 1000);
   f.textContent = s < 10 ? 'up to date' : s < 60 ? `updated ${s}s ago` : `updated ${Math.round(s / 60)}m ago`;
@@ -2633,8 +2633,10 @@ async function backUp(url, want, had, name, seconds) {
   for (const end = Date.now() + seconds * 1000; Date.now() < end; await sleep(2000)) {
     try { const h = await getJSON(url); last = h && h.version; if (last && (last === want || (had && last !== had))) return last; } catch (_) {}
   }
-  throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${Math.round(seconds / 60)} minutes.`);
+  throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${seconds < 120 ? seconds + ' seconds' : Math.round(seconds / 60) + ' minutes'}. If it says stopped, ask your Wizard to start ${name}.`);
 }
+const UPDATE_WAIT_MS = 30 * 60000;
+const stoppedWhy = (name, to) => `${name} is updated${to ? ' to ' + to : ''} but stopped, so it can’t open. Updating doesn’t start a stopped app: ask your Wizard to start ${name}.`;
 // 0.27: the Update button spins from the tap until the in-place progress panel takes over (or the answer comes back)
 async function updateApp(id, btn, item) { const done = busyOn(btn); try { return await updateApp_(id, btn, item); } finally { done(); } }
 async function updateApp_(id, btn, item) {
@@ -2650,11 +2652,20 @@ async function updateApp_(id, btn, item) {
   try {
     const url = STORE_INSTALL + encodeURIComponent(id);
     let j = await getJSON(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(sel) });
-    for (let n = 0; j && j.state === 'installing' && n < 360; n++) {
+    // 0.35.1: wait as long as the App Manager itself may take (its update waits up to 20 minutes, then up to 5 more to
+    // start the app again), not 15 minutes: a big app (Messenger pulls several images) was given up on mid-update.
+    // A job the App Manager no longer knows (404: it restarted) is said so instead of spinning to the deadline.
+    for (let lost = 0, end = Date.now() + UPDATE_WAIT_MS; j && j.state === 'installing' && Date.now() < end;) {
       runStep(r, 'Installing', jobDetail(j));
-      await sleep(2500); j = await getJSON(url).catch(() => ({ state: 'installing' }));
+      await sleep(2500);
+      j = await getJSON(url).then(x => { lost = 0; return x; }, e => e.status === 404 && ++lost >= 3 ? { state: 'lost' } : { state: 'installing' });
     }
+    if (j && j.state === 'lost') throw new Error(`The App Manager lost track of this update (it restarted). ${a.name} may still be updating: refresh in a few minutes to see its version.`);
+    if (j && j.state === 'installing') throw new Error(`${a.name} is still updating after ${Math.round(UPDATE_WAIT_MS / 60000)} minutes. Refresh later to see whether it finished.`);
     if (!j || j.state !== 'installed') throw new Error((j && j.error) || 'The App Manager didn’t finish. Refresh to check.');
+    // An app that is stopped stays stopped after an update (the App Manager only restarts apps that were running), so
+    // its health check can't answer: say so now instead of waiting minutes for it.
+    if (j.status === 'stopped') throw new Error(stoppedWhy(a.name, a.latest));
     runStep(r, 'Restarting', jobDetail(j));
     const v = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', a.latest, self ? me && me.version : a.version, a.name, 150);
     facts.apps[id] = v;
@@ -2777,6 +2788,9 @@ function paintWizards() {
     list.append(r);
   }
   card.append(list);
+  // 0.35.1: a stopped app opens as a blank page and an update leaves it stopped; say what to do
+  const stopped = apps.filter(a => a.status === 'stopped').map(a => a.name);
+  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Updating doesn’t start a stopped app: ask your Wizard to start ${stopped.length === 1 ? 'it' : 'them'}.`));
   card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
   w.replaceChildren(card);
   const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
@@ -2806,7 +2820,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.35.0';
+const PAGE_VERSION = '0.35.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2869,7 +2883,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.35.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.35.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
