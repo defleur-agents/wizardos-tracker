@@ -133,6 +133,16 @@ class Recover(unittest.TestCase):
         self.assertEqual(sum(c.startswith(UPD + ' ') for c in out['calls']), 1)
 
 
+    def test_never_a_second_update_while_the_app_manager_still_updates(self):
+        out = run([app()], {
+            UPD: [{'body': {'state': 'failed', 'error': 'messenger is still updating after 61 min'}, 'set': {'messenger': {'status': 'updating'}}}],
+        })
+        self.assertEqual(out['state'], 'failed')
+        self.assertIn('Messenger is still updating', out['reason'])
+        self.assertEqual(sum(c.startswith(UPD + ' ') for c in out['calls']), 1)
+        self.assertFalse(any(c.startswith(START) for c in out['calls']))
+
+
 class Start(unittest.TestCase):
     def test_stopped_app_starts_with_one_tap(self):
         out = run([app('stopped', update=False)], {
