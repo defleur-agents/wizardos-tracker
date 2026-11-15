@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.36.0
+version: 0.36.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -158,6 +158,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.29.0** (Miguel, 11 Nov) **The stats follow the current stages.** Show stats now has one column per stage the tab shows (Core: Waiting for approval → Build queue → Needs an answer → AI review → Human review → Show-and-tell → Shipping → Done; Apps and Bugs likewise), each with its typical time, its target and the ⓘ explaining exactly what is timed. Kick-backs read as one line under them ("Sent back from AI review: 8% · 1×"). Release stages (Merged → For testers → For everyone, and Shipping) count from when the Tracker first saw the change in that release (kept in `release_at.json`; For everyone falls back to the Shipped-in record). Each item's own line in its detail uses the same stages as its tab, with the time it spent in each and the current one outlined. The bug detail's summary line describes the current bug flow (no AI check after merge; the check is optional).
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
+
+**0.36.1** (seen live on oscar-main) Settings shows a Start or Update's steps, time and Retry right under that app's row (it was only on cards; Settings showed just the button text), the "is stopped, tap Start" line sits above the list it points to, and a failed start reads "<app> didn't start: …" instead of "Last failed update".
 
 **0.36.0** (Miguel, 15 Nov: "Robert must get unstuck himself with one tap") **Stopped apps start with one tap, and an update that ends stopped fixes itself.** Settings › Update lists a stopped app with **Start** (or **Start and update** when the Store has a newer one) instead of "ask your Wizard". It uses the App Manager's owner route `POST store-install/_start/<id> {}` (wizard-app-manager#713, same owner gate as Update; a Wizard without it says to update WizardOS first). Update of a stopped app starts it first (an update only brings back an app that was running). When an update ends with the app stopped or still on its old version, the Tracker starts the app and updates once more by itself (its images are already downloaded, so the second try is quick), with the steps on screen: Starting → Installing → Starting app → Trying again → Restarting → Done, and the elapsed time. An update the App Manager lost or that is still running is never retried on top. If it still fails: one plain line and **Retry**. The wait for one update is 35 minutes (the App Manager's update limit is 30, wizard-app-manager#712).
 

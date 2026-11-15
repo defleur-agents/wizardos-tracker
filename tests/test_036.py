@@ -174,6 +174,12 @@ class Page(unittest.TestCase):
         self.assertIn('Tap Start on', JS)
         self.assertNotIn('ask your Wizard to start', JS)
 
+    def test_settings_shows_the_run_under_its_row(self):
+        body = JS[JS.index('function paintWizards'):]
+        self.assertIn("const pnl = updPanel(run, null); pnl.classList.add('bd-wiz-run'); list.append(pnl);", body)
+        self.assertLess(body.index('Tap Start on'), body.index("const list = make('div', 'bd-list rows bd-wiz-apps')"))
+        self.assertIn("f.kind === 'start' ? `${f.name || id} didn’t start", body)
+
     def test_waits_longer_than_the_app_manager(self):
         self.assertIn('const UPDATE_WAIT_MS = 35 * 60000;', JS)
 

@@ -2741,7 +2741,7 @@ async function updateApp_(id, btn, item) {
     delete wizFail[id]; runEnd(r, true);
   } catch (e) {
     const reason = e.status === 404 && !e.final ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message;
-    wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason };
+    wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason, kind: r.kind };
     runEnd(r, false, reason);
   } finally {
     store.set('board.wizfail', wizFail);
@@ -2841,7 +2841,10 @@ function paintWizards() {
   const all = smallBtn('Update all', b => updateAll(b)); if (!n) all.setAttribute('aria-disabled', 'true'); bar.append(all);
   card.append(bar);
   const fails = Object.entries(wizFail).sort((a, b) => b[1].at - a[1].at);
-  if (fails.length) { const [id, f] = fails[0]; card.append(make('p', 'bd-why', `Last failed update: ${f.name || id} → ${f.to || '?'} (${when(new Date(f.at).toISOString())}): ${f.reason}`)); }
+  if (fails.length) { const [id, f] = fails[0]; if (!runs.get(id)) card.append(make('p', 'bd-why', f.kind === 'start' ? `${f.name || id} didn’t start (${when(new Date(f.at).toISOString())}): ${f.reason}` : `Last failed update: ${f.name || id} → ${f.to || '?'} (${when(new Date(f.at).toISOString())}): ${f.reason}`)); }
+  // 0.35.1: a stopped app opens as a blank page; 0.36.0: its row has Start
+  const stopped = apps.filter(a => isStopped(a) && !a.pinned && !runs.get(a.id)).map(a => a.name);
+  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Tap Start on ${stopped.length === 1 ? 'it' : 'each'} below.`));
   const list = make('div', 'bd-list rows bd-wiz-apps');
   for (const a of apps) {
     const r = make('div', 'bd-rowx bd-wiz-app' + (a.id === umFocus ? ' focus' : ''));
@@ -2857,11 +2860,11 @@ function paintWizards() {
     if ((!a.update && !stop) || busy) { b.setAttribute('aria-disabled', 'true'); b.title = busy || (a.pinned ? 'Updates with WizardOS (above).' : a.ahead ? 'This Wizard runs a newer build than the Store lists.' : a.latest ? 'Already the latest.' : 'Nothing in the Store to update to.'); }
     r.append(b);
     list.append(r);
+    // 0.36.0: the app's Start / Update shows its steps, time and Retry right under its row
+    const run = runs.get(a.id);
+    if (run) { const pnl = updPanel(run, null); pnl.classList.add('bd-wiz-run'); list.append(pnl); }
   }
   card.append(list);
-  // 0.35.1: a stopped app opens as a blank page; 0.36.0: its row has Start
-  const stopped = apps.filter(a => isStopped(a) && !a.pinned).map(a => a.name);
-  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Tap Start on ${stopped.length === 1 ? 'it' : 'each'} below.`));
   card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
   w.replaceChildren(card);
   const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
@@ -2891,7 +2894,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.0';
+const PAGE_VERSION = '0.36.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2954,7 +2957,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
