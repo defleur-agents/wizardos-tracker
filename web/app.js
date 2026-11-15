@@ -2595,19 +2595,22 @@ function updPanel(r, i) {
   const head = make('p', 'bd-upd-h'), t = make('span', 'bd-upd-t');
   const to = r.to ? ' to ' + r.to : '';
   head.append(make('i', 'bd-upd-dot', r.state === 'done' ? '✓' : r.state === 'failed' ? '!' : ''),
-    make('b', '', r.state === 'running' ? `Updating ${r.name}${to}` : r.state === 'failed' ? `${r.name} didn’t update` : `${r.name} updated${to}`), t);
+    make('b', '', r.kind === 'start' ? (r.state === 'running' ? `Starting ${r.name}` : r.state === 'failed' ? `${r.name} didn’t start` : `${r.name} is running`)
+      : r.state === 'running' ? `Updating ${r.name}${to}` : r.state === 'failed' ? `${r.name} didn’t update` : `${r.name} updated${to}`), t);
   box.append(head);
-  const ol = make('ol', 'bd-upd-steps'), n = UPD_STEPS.indexOf(r.step);
-  UPD_STEPS.forEach((w, k) => {
+  const steps = r.steps || UPD_STEPS, ol = make('ol', 'bd-upd-steps'), n = steps.indexOf(r.step);
+  ol.style.setProperty('--n', steps.length);
+  steps.forEach((w, k) => {
     const li = make('li', r.state === 'done' || k < n ? 'ok' : k === n ? (r.state === 'failed' ? 'bad' : 'now') : '', w);
     if (k === n && r.state === 'running') li.setAttribute('aria-current', 'step');
     ol.append(li);
   });
   box.append(ol);
-  if (r.state === 'running') box.append(make('p', 'bd-upd-note', [r.detail, cap(usually(r))].filter(Boolean).join(' · ')));
+  if (r.state === 'running') box.append(make('p', 'bd-upd-note', [r.recovered ? 'It stopped on the way, so the Tracker started it and is trying once more' : '', r.detail, cap(usually(r))].filter(Boolean).join(' · ')));
+  if (r.state === 'done' && r.recovered) box.append(make('p', 'bd-upd-note', 'It stopped on the way; the Tracker started it and updated it again.'));
   if (r.state === 'failed') {
     const why = make('p', 'bd-upd-why', r.reason || 'No reason given.');
-    if (r.retry) why.append(document.createTextNode(' '), smallBtn('Try again', b => r.retry(b)));
+    if (r.retry) why.append(document.createTextNode(' '), smallBtn('Retry', b => r.retry(b)));
     box.append(why);
   }
   if (r.state === 'done') {
@@ -2628,50 +2631,116 @@ function repaintRuns() {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Restarting: wait until the app answers its health check with a version other than the one it had (the new one)
-async function backUp(url, want, had, name, seconds) {
+// `any`: any answer will do (a start keeps the version the app had)
+async function backUp(url, want, had, name, seconds, any) {
   let last = null;
   for (const end = Date.now() + seconds * 1000; Date.now() < end; await sleep(2000)) {
-    try { const h = await getJSON(url); last = h && h.version; if (last && (last === want || (had && last !== had))) return last; } catch (_) {}
+    try { const h = await getJSON(url); last = h && h.version; if (last && (any || last === want || (had && last !== had))) return last; } catch (_) {}
   }
-  throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${seconds < 120 ? seconds + ' seconds' : Math.round(seconds / 60) + ' minutes'}. If it says stopped, ask your Wizard to start ${name}.`);
+  throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${seconds < 120 ? seconds + ' seconds' : Math.round(seconds / 60) + ' minutes'}.`);
 }
-const UPDATE_WAIT_MS = 30 * 60000;
-const stoppedWhy = (name, to) => `${name} is updated${to ? ' to ' + to : ''} but stopped, so it can’t open. Updating doesn’t start a stopped app: ask your Wizard to start ${name}.`;
+// 0.36.0: wait a little longer than the App Manager itself may take (wizard-app-manager PR 712: an update gets up to 30
+// minutes and wam waits 31m40s for it), so the Tracker never gives up on an update that is still going.
+const UPDATE_WAIT_MS = 35 * 60000;
+// ---------- 0.36.0 Start a stopped app, and recover an update that left it stopped (Robert, 15 Nov) ----------
+// A stopped app opens as a blank page, and an update leaves a stopped app stopped (the App Manager only brings back an
+// app that was running). The App Manager's owner route POST store-install/_start/<id> {} starts it (wizard-app-manager
+// issue 711, PR 713: same owner gate as Update; GET is the job: starting -> running | failed). A Wizard whose App Manager
+// predates that route answers 'bad app id' (400) or 'not found' (404): that is said plainly, never guessed around.
+const STOPPED = new Set(['stopped', 'start_error', 'stop_error', 'update_error', 'restart_error']);
+const isStopped = a => !!a && STOPPED.has(a.status);
+const START_WAIT_MS = 6 * 60000;   // wam's start waits up to 5 minutes for the app to say running
+const noStartRoute = e => (e.status === 400 && /bad app id/.test(e.message)) || (e.status === 404 && /^not found$/.test(e.message));
+const NO_START = name => `${name} is stopped, and this Wizard can’t start apps from the Tracker yet: update WizardOS, then tap Start.`;
+const STORE_POST = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(body) });
+const fresh = id => ((catalog && catalog.apps) || []).find(x => x.id === id) || null;
+async function startJob(a, r, step) {
+  runStep(r, step || 'Starting app', 'Starting its containers');
+  const url = STORE_INSTALL + '_start/' + encodeURIComponent(a.id);
+  let j;
+  try { j = await getJSON(url, STORE_POST({})); }
+  catch (e) { if (noStartRoute(e)) { const x = new Error(NO_START(a.name)); x.final = true; throw x; } throw e; }
+  for (const end = Date.now() + START_WAIT_MS; j && j.state === 'starting' && Date.now() < end;) {
+    await sleep(2000);
+    j = await getJSON(url).catch(() => ({ state: 'starting' }));
+  }
+  if (j && j.state === 'starting') throw new Error(`${a.name} is still starting after ${Math.round(START_WAIT_MS / 60000)} minutes. Refresh in a minute to see it.`);
+  if (!j || j.state !== 'running') throw new Error(`${a.name} didn’t start${j && j.error ? ': ' + String(j.error).split('\n')[0].slice(0, 160) : '.'}`);
+}
+// One update attempt: ask, follow the job, then the app's health check. An error the Tracker may recover from (the job
+// failed or ended with the app stopped, or the app came back on the wrong version) carries `recover`; a job the App
+// Manager lost or that is still running never does, so a second update is never started on top of a first.
+async function attemptUpdate(a, r, self, again) {
+  const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
+  const url = STORE_INSTALL + encodeURIComponent(a.id);
+  const tag = (e, recover) => { e.recover = recover; return e; };
+  let j = await getJSON(url, STORE_POST(sel));
+  for (let lost = 0, end = Date.now() + UPDATE_WAIT_MS; j && j.state === 'installing' && Date.now() < end;) {
+    if (again) runStep(r, 'Trying again', jobDetail(j) || 'Its images are already downloaded, so this is quicker');
+    else runStep(r, 'Installing', jobDetail(j));
+    await sleep(2500);
+    j = await getJSON(url).then(x => { lost = 0; return x; }, e => e.status === 404 && ++lost >= 3 ? { state: 'lost' } : { state: 'installing' });
+  }
+  if (j && j.state === 'lost') throw tag(new Error(`The App Manager lost track of this update (it restarted). ${a.name} may still be updating: refresh in a few minutes to see its version.`), false);
+  if (j && j.state === 'installing') throw tag(new Error(`${a.name} is still updating after ${Math.round(UPDATE_WAIT_MS / 60000)} minutes. Refresh later to see whether it finished.`), false);
+  if (!j || j.state !== 'installed') throw tag(new Error((j && j.error ? String(j.error).split('\n')[0].slice(0, 200) : '') || 'The App Manager didn’t finish. Refresh to check.'), !/REFUSED|needs |host access|isolated networks/i.test((j && j.error) || ''));
+  if (j.status === 'stopped') throw tag(new Error(stoppedWhy(a.name, a.latest)), true);
+  runStep(r, 'Restarting', jobDetail(j));
+  try { return await backUp(self ? 'healthz' : '/' + encodeURIComponent(a.id) + '/healthz', a.latest, self ? me && me.version : a.version, a.name, 150); }
+  catch (e) { throw tag(e, true); }
+}
+const stoppedWhy = (name, to) => `${name} ended up stopped${to ? ' before reaching ' + to : ''}, so it can’t open.`;
+const STEPS_UPDATE = UPD_STEPS, STEPS_START = ['Starting app', 'Restarting', 'Done'];
+const STEPS_START_UPDATE = ['Starting app', 'Installing', 'Restarting', 'Done'];
+const STEPS_RECOVER = ['Starting', 'Installing', 'Starting app', 'Trying again', 'Restarting', 'Done'];
 // 0.27: the Update button spins from the tap until the in-place progress panel takes over (or the answer comes back)
 async function updateApp(id, btn, item) { const done = busyOn(btn); try { return await updateApp_(id, btn, item); } finally { done(); } }
+// 0.36.0: one tap does what it takes. Stopped -> start it first (an update brings back only a running app). Update
+// ended stopped or on the old version -> start it and update once more (its images are cached, so the second try is
+// quick). Still not there -> one plain line and Retry.
 async function updateApp_(id, btn, item) {
   await loadCatalog();
-  const a = ((catalog && catalog.apps) || []).find(x => x.id === id);
-  if (!a || !a.release) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
-  if (!a.update) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
+  const a = fresh(id);
+  const stopped = isStopped(a);
+  if (!a || (!a.release && !stopped)) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
+  if (!a.update && !stopped) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
   if (runs.get(id) && runs.get(id).state === 'running') return;
-  const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
   const self = id === 'wizardos-tracker';
   wizBusy.set(id, 'Starting…');
-  const r = newRun(id, a.name, a.latest, item, b => updateApp(id, b, item));
+  const r = newRun(id, a.name, a.update ? a.latest : null, item, b => updateApp(id, b, item));
+  r.kind = a.update ? 'update' : 'start';
+  r.steps = stopped ? (a.update ? STEPS_START_UPDATE : STEPS_START) : STEPS_UPDATE;
+  if (stopped) runStep(r, 'Starting app', '');
   try {
-    const url = STORE_INSTALL + encodeURIComponent(id);
-    let j = await getJSON(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(sel) });
-    // 0.35.1: wait as long as the App Manager itself may take (its update waits up to 20 minutes, then up to 5 more to
-    // start the app again), not 15 minutes: a big app (Messenger pulls several images) was given up on mid-update.
-    // A job the App Manager no longer knows (404: it restarted) is said so instead of spinning to the deadline.
-    for (let lost = 0, end = Date.now() + UPDATE_WAIT_MS; j && j.state === 'installing' && Date.now() < end;) {
-      runStep(r, 'Installing', jobDetail(j));
-      await sleep(2500);
-      j = await getJSON(url).then(x => { lost = 0; return x; }, e => e.status === 404 && ++lost >= 3 ? { state: 'lost' } : { state: 'installing' });
+    if (stopped) await startJob(a, r);
+    if (!a.update) {
+      // started only: wait for it to answer (it keeps the version it had)
+      runStep(r, 'Restarting', 'Waiting for it to answer');
+      facts.apps[id] = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', a.version, null, a.name, 150, true);
+    } else {
+      let v;
+      try { v = await attemptUpdate(a, r, self, false); }
+      catch (e) {
+        if (!e.recover || self) throw e;
+        r.steps = STEPS_RECOVER; r.recovered = true;
+        catalog = null; await loadCatalog(true);
+        const b = fresh(id) || a;
+        if (isStopped(b)) await startJob(b, r);
+        else runStep(r, 'Starting app', 'It is running');
+        catalog = null; await loadCatalog(true);
+        const c = fresh(id) || b;
+        if (!c.update) { runStep(r, 'Restarting', ''); v = await backUp('/' + encodeURIComponent(id) + '/healthz', a.latest, null, a.name, 150, true); }
+        else {
+          runStep(r, 'Trying again', 'Its images are already downloaded, so this is quicker');
+          try { v = await attemptUpdate(c, r, self, true); }
+          catch (e2) { e2.final = true; throw e2; }
+        }
+      }
+      facts.apps[id] = v;
     }
-    if (j && j.state === 'lost') throw new Error(`The App Manager lost track of this update (it restarted). ${a.name} may still be updating: refresh in a few minutes to see its version.`);
-    if (j && j.state === 'installing') throw new Error(`${a.name} is still updating after ${Math.round(UPDATE_WAIT_MS / 60000)} minutes. Refresh later to see whether it finished.`);
-    if (!j || j.state !== 'installed') throw new Error((j && j.error) || 'The App Manager didn’t finish. Refresh to check.');
-    // An app that is stopped stays stopped after an update (the App Manager only restarts apps that were running), so
-    // its health check can't answer: say so now instead of waiting minutes for it.
-    if (j.status === 'stopped') throw new Error(stoppedWhy(a.name, a.latest));
-    runStep(r, 'Restarting', jobDetail(j));
-    const v = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', a.latest, self ? me && me.version : a.version, a.name, 150);
-    facts.apps[id] = v;
     delete wizFail[id]; runEnd(r, true);
   } catch (e) {
-    const reason = e.status === 404 ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message;
+    const reason = e.status === 404 && !e.final ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message;
     wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason };
     runEnd(r, false, reason);
   } finally {
@@ -2782,15 +2851,17 @@ function paintWizards() {
     const where = a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
     t.append(make('span', 'bd-meta', [a.version || '?', where, a.status && a.status !== 'running' ? a.status : ''].filter(Boolean).join(' · ')));
     r.append(t);
-    const b = smallBtn(busy || 'Update', x => a.update ? updateApp(a.id, x) : pop(x, '', b.title));
-    if (!a.update || busy) { b.setAttribute('aria-disabled', 'true'); b.title = busy || (a.pinned ? 'Updates with WizardOS (above).' : a.ahead ? 'This Wizard runs a newer build than the Store lists.' : a.latest ? 'Already the latest.' : 'Nothing in the Store to update to.'); }
+    // 0.36.0: a stopped app gets a one-tap Start (Start and update when the Store has a newer one)
+    const stop = isStopped(a) && !a.pinned;
+    const b = smallBtn(busy || (stop ? (a.update ? 'Start and update' : 'Start') : 'Update'), x => a.update || stop ? updateApp(a.id, x) : pop(x, '', b.title));
+    if ((!a.update && !stop) || busy) { b.setAttribute('aria-disabled', 'true'); b.title = busy || (a.pinned ? 'Updates with WizardOS (above).' : a.ahead ? 'This Wizard runs a newer build than the Store lists.' : a.latest ? 'Already the latest.' : 'Nothing in the Store to update to.'); }
     r.append(b);
     list.append(r);
   }
   card.append(list);
-  // 0.35.1: a stopped app opens as a blank page and an update leaves it stopped; say what to do
-  const stopped = apps.filter(a => a.status === 'stopped').map(a => a.name);
-  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Updating doesn’t start a stopped app: ask your Wizard to start ${stopped.length === 1 ? 'it' : 'them'}.`));
+  // 0.35.1: a stopped app opens as a blank page; 0.36.0: its row has Start
+  const stopped = apps.filter(a => isStopped(a) && !a.pinned).map(a => a.name);
+  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Tap Start on ${stopped.length === 1 ? 'it' : 'each'} below.`));
   card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
   w.replaceChildren(card);
   const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
@@ -2820,7 +2891,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.35.1';
+const PAGE_VERSION = '0.36.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2883,7 +2954,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.35.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -9,8 +9,8 @@ JS = (ROOT / 'web' / 'app.js').read_text()
 
 class AppUpdate(unittest.TestCase):
     def test_waits_as_long_as_the_app_manager(self):
-        # wam app_update waits up to 20 min for the update, then up to 5 min to start the app again
-        self.assertIn('const UPDATE_WAIT_MS = 30 * 60000;', JS)
+        # 0.36.0: 35 min (the App Manager's update limit is 30, wizard-app-manager#712)
+        self.assertIn('const UPDATE_WAIT_MS = 35 * 60000;', JS)
         self.assertNotIn("n < 360; n++", JS)
 
     def test_lost_job_is_said(self):
@@ -18,12 +18,12 @@ class AppUpdate(unittest.TestCase):
         self.assertIn('The App Manager lost track of this update', JS)
 
     def test_stopped_after_update_is_said_at_once(self):
-        i = JS.index("if (j.status === 'stopped') throw new Error(stoppedWhy(a.name, a.latest));")
+        i = JS.index("if (j.status === 'stopped') throw tag(new Error(stoppedWhy(a.name, a.latest)), true);")
         self.assertLess(i, JS.index("runStep(r, 'Restarting', jobDetail(j));"))
-        self.assertIn('Updating doesn’t start a stopped app', JS)
+        self.assertIn('ended up stopped', JS)   # 0.36.0: and the Tracker then starts it (test_036)
 
     def test_settings_list_names_stopped_apps(self):
-        self.assertIn("apps.filter(a => a.status === 'stopped')", JS)
+        self.assertIn("apps.filter(a => isStopped(a) && !a.pinned)", JS)
 
     def test_header_says_refreshing(self):
         self.assertIn("f.textContent = 'refreshing…'", JS)
@@ -34,7 +34,7 @@ class Version(unittest.TestCase):
     def test_versions_agree(self):
         from test_013 import S
         v = S.VERSION
-        self.assertEqual(v, '0.35.1')
+        self.assertEqual(v, '0.36.0')
         self.assertIn(f"PAGE_VERSION = '{v}'", JS)
         self.assertIn(f"version: '{v}' }})", JS)
         self.assertIn(f'**{v}**', (ROOT / 'wizard.md').read_text())

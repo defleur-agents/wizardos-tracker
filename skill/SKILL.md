@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.35.1
+version: 0.36.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -68,6 +68,7 @@ The default list sort is **Your turn first**: what the viewer can act on now (th
 ## Getting started and updates (for the owner)
 - First open: the owner taps **Sign in with GitHub**, copies the short code, taps **Open GitHub ↗**, pastes it and taps Authorize; the Tracker signs in by itself. Nothing to set up. Only WizardOS team members (humanitylabs-org) get in; the card says plainly what to do otherwise (ask Miguel or James to be added, or join through the team invite waiting on GitHub).
 - When a newer Tracker is in the Store, the Tracker's main screen shows **A new version of the Tracker is ready · Update**: one tap updates it and the page reloads. If the owner asks to update the Tracker (or any app), send them to that button (or Tracker › Settings › Update for other apps and WizardOS).
+- An app that is **stopped** (it opens as a blank page, often after a big update such as Messenger) has **Start** in Tracker › Settings › Update (0.36.0): one tap starts it, and updates it too when it is behind. An update that ends stopped is started and retried by the Tracker itself. Send the owner to that button.
 - Never run `wam`, docker or any install command for this, and never send the owner to config files, env vars or client ids. A stock agent can't run wam anyway; the buttons are the way.
 
 The Update manager and Try changes live in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Cards show Update or the switch just in time, in their one action area.
