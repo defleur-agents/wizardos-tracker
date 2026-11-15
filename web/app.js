@@ -2725,6 +2725,8 @@ async function updateApp_(id, btn, item) {
         r.steps = STEPS_RECOVER; r.recovered = true;
         catalog = null; await loadCatalog(true);
         const b = fresh(id) || a;
+        // still updating (or another step) on the App Manager: never start a second update on top of it
+        if (b.status && b.status !== 'running' && !isStopped(b)) { const x = new Error(`${a.name} is still ${String(b.status).replace(/_/g, ' ')}. Refresh in a few minutes to see whether it finished.`); x.final = true; throw x; }
         if (isStopped(b)) await startJob(b, r);
         else runStep(r, 'Starting app', 'It is running');
         catalog = null; await loadCatalog(true);
@@ -2894,7 +2896,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.1';
+const PAGE_VERSION = '0.36.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2957,7 +2959,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
