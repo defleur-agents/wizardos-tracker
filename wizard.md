@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.35.0
+version: 0.35.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -158,6 +158,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.29.0** (Miguel, 11 Nov) **The stats follow the current stages.** Show stats now has one column per stage the tab shows (Core: Waiting for approval → Build queue → Needs an answer → AI review → Human review → Show-and-tell → Shipping → Done; Apps and Bugs likewise), each with its typical time, its target and the ⓘ explaining exactly what is timed. Kick-backs read as one line under them ("Sent back from AI review: 8% · 1×"). Release stages (Merged → For testers → For everyone, and Shipping) count from when the Tracker first saw the change in that release (kept in `release_at.json`; For everyone falls back to the Shipped-in record). Each item's own line in its detail uses the same stages as its tab, with the time it spent in each and the current one outlined. The bug detail's summary line describes the current bug flow (no AI check after merge; the check is optional).
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
+
+**0.35.1** (Robert, 15 Nov: Messenger's update got stuck and it opened blank) **App updates say what happened.** Settings › Update waits as long as the App Manager may take (30 minutes, was 15) so a big app like Messenger isn't given up on mid-update; an update the App Manager lost track of (it restarted) says so instead of spinning; an app that is stopped after its update says it is stopped and to ask your Wizard to start it, instead of waiting minutes for it to answer; the Settings list says when an app is stopped and why it won't open. The header's list reload now reads 'refreshing…', not 'updating…'.
 
 **0.35.0** (Miguel, 15 Nov: the badge counted things he can't try yet) **Waiting on someone else.** A feature in Human review that needs another person to act first (a Mac build for a Mac app change, a newer phone app release than the published one, or a question the newest comment puts to someone else) no longer counts on its filer's Needs you badge. `/api/needs-you` lists it under `waiting` (who, what, link) and its card says "Waiting on James: Mac build". It counts again as soon as the Mac build or phone release that has it is published. Who makes Mac builds and phone releases: policy `release_people` (James).
 
