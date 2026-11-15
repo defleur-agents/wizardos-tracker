@@ -2645,7 +2645,7 @@ const UPDATE_WAIT_MS = 35 * 60000;
 // ---------- 0.36.0 Start a stopped app, and recover an update that left it stopped (Robert, 15 Nov) ----------
 // A stopped app opens as a blank page, and an update leaves a stopped app stopped (the App Manager only brings back an
 // app that was running). The App Manager's owner route POST store-install/_start/<id> {} starts it (wizard-app-manager
-// issue 711, PR 713: same owner gate as Update; GET is the job: starting -> running | failed). A Wizard whose App Manager
+// issue 711, PR 716: same owner gate as Update; GET is the job: starting -> running | failed). A Wizard whose App Manager
 // predates that route answers 'bad app id' (400) or 'not found' (404): that is said plainly, never guessed around.
 const STOPPED = new Set(['stopped', 'start_error', 'stop_error', 'update_error', 'restart_error']);
 const isStopped = a => !!a && STOPPED.has(a.status);
