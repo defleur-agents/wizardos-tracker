@@ -23,7 +23,7 @@ class AppUpdate(unittest.TestCase):
         self.assertIn('ended up stopped', JS)   # 0.36.0: and the Tracker then starts it (test_036)
 
     def test_settings_list_names_stopped_apps(self):
-        self.assertIn("apps.filter(a => isStopped(a) && !a.pinned)", JS)
+        self.assertIn("apps.filter(a => isStopped(a) && !a.pinned && !runs.get(a.id))", JS)
 
     def test_header_says_refreshing(self):
         self.assertIn("f.textContent = 'refreshing…'", JS)
@@ -34,7 +34,7 @@ class Version(unittest.TestCase):
     def test_versions_agree(self):
         from test_013 import S
         v = S.VERSION
-        self.assertEqual(v, '0.36.0')
+        self.assertEqual(v, '0.36.1')
         self.assertIn(f"PAGE_VERSION = '{v}'", JS)
         self.assertIn(f"version: '{v}' }})", JS)
         self.assertIn(f'**{v}**', (ROOT / 'wizard.md').read_text())
