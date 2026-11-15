@@ -126,7 +126,7 @@ class OneTapUpdate(unittest.TestCase):
         self.assertIn("updateWizardOS(go, null)", f)
         self.assertNotIn('askPop', f)   # one tap
         self.assertIn('updPanel(running[1], null)', f)
-        self.assertIn("STORE_INSTALL + encodeURIComponent(id)", fn('updateApp_'))
+        self.assertIn("STORE_INSTALL + encodeURIComponent(a.id)", fn('attemptUpdate'))   # 0.36.0
 
     def test_checked_at_open_and_periodically(self):
         self.assertIn('setTimeout(() => checkSelfUpdate(false)', JS)

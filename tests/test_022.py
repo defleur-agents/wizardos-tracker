@@ -83,7 +83,7 @@ class Update(unittest.TestCase):
         self.assertIn("'aria-live', 'polite'", JS[JS.index('function updPanel'):])
 
     def test_polls_job_then_health(self):
-        body = JS[JS.index('async function updateApp'):JS.index('async function updateAll')]
+        body = JS[JS.index('async function startJob'):JS.index('async function updateAll')]   # 0.36.0: the attempt is its own function
         self.assertLess(body.index("runStep(r, 'Installing'"), body.index("runStep(r, 'Restarting'"))
         self.assertIn("'/healthz'", body)
         self.assertIn('jobDetail(j)', body, 'a step the App Manager does name is shown')
