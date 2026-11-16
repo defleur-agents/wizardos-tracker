@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.36.4
+version: 0.36.5
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -162,6 +162,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.2** The automatic second try never starts while the App Manager still says the app is updating (since wizard-app-manager PR 712 a slow update reports an error while it still runs): it says "<app> is still updating. Refresh in a few minutes…" instead. The App Manager refuses such an update too (PR 716).
 
 **0.36.3** (Jan, 16 Nov) **An update survives a reload.** Reloading the Tracker (⌘R) while an app was updating dropped the progress, so it offered Update again for an update still running. Now it asks the box: the App Manager's job for each app (and each app's own status, so an update started by the nightly run, Settings or another device counts too). A running update gets its progress panel back and no Update button; one that finished while the page was away says how it ended. Nothing is posted twice. A WizardOS update that is installing shows its panel the same way.
+
+**0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.4** (Jan, 16 Nov) **No 'Update' for a Tracker the box already runs.** A Tracker page left open while the Tracker was updated elsewhere (Settings, the nightly run, another device) showed both 'Tracker updated · Reload' and 'An update is ready: the Tracker · Update', because it judged its own version by the server that answered when the page loaded. It now reads the version the box runs (healthz) before offering the Tracker's update, so only Reload shows. And while the main screen offers any update, it checks the box again every 2 minutes, so an app updated elsewhere stops being offered within 2 minutes instead of 30.
 

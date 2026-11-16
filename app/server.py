@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.36.4'
+VERSION = '0.36.5'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2464,7 +2464,7 @@ def board_split(person, args):
         elif group == 'queued':
             extra = {'wait_reason': queue_reason(repo)}
         elif group == 'sorting':
-            extra = {'wait_reason': SORTING_NOTE}
+            extra = {'wait_reason': SORTING_NOTE, **sorting_approval(cat, names, approver)}
         elif group == 'answer':
             q_ = builder_question([(((c.get('author') or {}).get('login') or ''), c.get('body') or '')
                                    for c in (n.get('comments') or {}).get('nodes') or []], base)
@@ -2504,6 +2504,8 @@ def board_split(person, args):
                 groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
                                      'wait_reason': queue_reason(it['repo']) if g == 'queued' else SORTING_NOTE if g == 'sorting' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
+                if g == 'sorting':   # 0.36.5: a core idea can be approved while the builder sorts it
+                    groups[g][0].update(sorting_approval(cat, it.get('labels') or [], approver))
                 groups[g][0]['waiting_on'] = waiting_on(groups[g][0], base)
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -4304,6 +4306,18 @@ def report_options(person):
     _, acct = account_for(person)
     return {**reporter.options(), 'core_repos': policy_base()['core_repos'],
             'screenshots': bool(acct.get('token') and _media_ready(acct['token']))}
+
+
+def sorting_approval(cat, labels, approver):
+    """0.36.5 (Miguel, 16 Nov): a core idea still being sorted (label triage) already sits under Waiting for approval,
+    so its card offers Approve / Decline there too instead of nothing. Approving adds james-approved, which the
+    builder's triage keeps when it moves the issue. 'pre_approved' marks one already approved."""
+    low = {str(x).lower() for x in labels or []}
+    if cat != 'core' or 'feature' not in low:
+        return {}
+    if JAMES_LABEL in low:
+        return {'pre_approved': True}
+    return {'sort_approve': True, 'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
 
 
 SORTING_NOTE = 'Sorting… the builder files it in the right place in a minute or two'
