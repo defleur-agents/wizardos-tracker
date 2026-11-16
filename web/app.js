@@ -2893,8 +2893,12 @@ function openUM(focusId) {
 }
 // The Tracker's own row shows the version that is actually running (the server answering this page), so it is right
 // straight after a self-update even if the App Manager's list is a moment behind.
+// 0.36.4: the Tracker version the box runs now (its healthz). It can be newer than the server that answered this page
+// when the Tracker was updated elsewhere (Settings, the nightly run, another device) while this page stayed open.
+let liveSelf = null;
+const selfVer = () => liveSelf || (me && me.version) || null;
 function runningSelf(a) {
-  const v = me.version, cmp = a.latest ? vcmp(a.latest, v) : 0;
+  const v = selfVer(), cmp = a.latest ? vcmp(a.latest, v) : 0;
   return { ...a, version: v, update: a.update && cmp > 0, ahead: a.latest ? cmp < 0 : a.ahead };
 }
 async function showWizards(force) {
@@ -2918,7 +2922,7 @@ function paintWizards() {
   card.append(os);
   if (osRun) card.append(updPanel(osRun, null));
   if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
-  const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a);
+  const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a);
   const n = apps.filter(a => a.update).length;
   const bar = make('div', 'bd-wiz-bar');
   bar.append(make('span', 'bd-meta', catalog.error || `${apps.length} apps · ${n ? n + ' to update' : 'all up to date'}`));
@@ -2978,7 +2982,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.3';
+const PAGE_VERSION = '0.36.4';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2991,8 +2995,15 @@ function newerBar(v) {
   b.title = `This page is ${PAGE_VERSION}; the Tracker now runs ${v}.`;
   b.hidden = false;
 }
+// 0.36.4: also what the main screen's 'An update is ready: the Tracker' compares against, so a page left open across an
+// update says only 'Tracker updated · Reload', never 'Update' for the version the box already runs.
 async function checkVersion() {
-  try { const h = await getJSON('healthz'); if (h && h.version && h.version !== PAGE_VERSION) newerBar(h.version); } catch (_) {}
+  try {
+    const h = await getJSON('healthz'); if (!h || !h.version) return;
+    const was = liveSelf; liveSelf = h.version;
+    if (h.version !== PAGE_VERSION) newerBar(h.version);
+    if (was && was !== liveSelf) { catalog = null; checkSelfUpdate(false).then(() => paintWizards()); }
+  } catch (_) {}
 }
 setInterval(checkVersion, 120000);
 setTimeout(checkVersion, 5000);
@@ -3006,7 +3017,7 @@ setTimeout(checkVersion, 5000);
 let allBusy = false;
 function pendingUpdates() {
   // the Tracker's own entry is judged by the version this page runs (runningSelf), never a stale catalog
-  const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a)
+  const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a)
     .filter(a => a && a.update && !wizBusy.has(a.id) && !busyStatus(a));
   const self = apps.find(a => a.id === 'wizardos-tracker');
   const list = apps.filter(a => a.id !== 'wizardos-tracker').map(a => ({ key: a.id, name: a.name }));
@@ -3031,17 +3042,20 @@ function selfUpdate() {
   box.className = 'bd-selfupd'; box.hidden = false; box.replaceChildren(t, go);
 }
 async function checkSelfUpdate(force) {
-  try { await loadCatalog(force); await resumeRuns(); } catch (_) {}
+  try { await Promise.all([loadCatalog(force), checkVersion()]); await resumeRuns(); } catch (_) {}
   selfUpdate();
 }
 setTimeout(() => checkSelfUpdate(false), 1500);
 setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
+// 0.36.4: while it offers an update, check again every 2 minutes, so an update that happened elsewhere (Settings, the
+// nightly run, another device) clears the offer instead of leaving it up for half an hour.
+setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hidden && el('selfupd-go')) { catalog = null; checkSelfUpdate(false); } }, 120000);
 
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.4' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
