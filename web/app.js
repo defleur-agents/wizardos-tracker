@@ -2673,8 +2673,14 @@ async function startJob(a, r, step) {
 async function attemptUpdate(a, r, self, again) {
   const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
   const url = STORE_INSTALL + encodeURIComponent(a.id);
+  const j = await getJSON(url, STORE_POST(sel));
+  keepRun(a, r);   // 0.36.3: the App Manager took it; a reload of this page picks it back up (resumeRuns)
+  return followJob(a, r, self, again, url, j);
+}
+// Follow the App Manager's install job to its end, then the app's health check. Shared by a tap and by a page that
+// reloaded while the job ran (0.36.3), which never posts again.
+async function followJob(a, r, self, again, url, j) {
   const tag = (e, recover) => { e.recover = recover; return e; };
-  let j = await getJSON(url, STORE_POST(sel));
   for (let lost = 0, end = Date.now() + UPDATE_WAIT_MS; j && j.state === 'installing' && Date.now() < end;) {
     if (again) runStep(r, 'Trying again', jobDetail(j) || 'Its images are already downloaded, so this is quicker');
     else runStep(r, 'Installing', jobDetail(j));
@@ -2690,6 +2696,14 @@ async function attemptUpdate(a, r, self, again) {
   catch (e) { throw tag(e, true); }
 }
 const stoppedWhy = (name, to) => `${name} ended up stopped${to ? ' before reaching ' + to : ''}, so it can’t open.`;
+// 0.36.3: the app updates this device started and the App Manager took, kept until they end (id -> {at, name, to, from})
+const keptRuns = () => store.get('board.appruns') || {};
+function keepRun(a, r) { const k = keptRuns(); k[a.id] = { at: r.at || Date.now(), name: a.name, to: a.latest || null, from: a.version || null }; store.set('board.appruns', k); }
+function forgetRun(id) { const k = keptRuns(); if (id in k) { delete k[id]; store.set('board.appruns', k); } }
+// An app whose own status says an operation runs on it (an update from anywhere, a backup, a restore, a start…)
+const BUSY_STATUS = new Set(['installing', 'updating', 'backing_up', 'restoring', 'starting', 'stopping', 'restarting', 'resetting', 'uninstalling']);
+const UPDATING_STATUS = new Set(['installing', 'updating', 'backing_up', 'restoring']);
+const busyStatus = a => !!a && BUSY_STATUS.has(a.status);
 const STEPS_UPDATE = UPD_STEPS, STEPS_START = ['Starting app', 'Restarting', 'Done'];
 const STEPS_START_UPDATE = ['Starting app', 'Installing', 'Restarting', 'Done'];
 const STEPS_RECOVER = ['Starting', 'Installing', 'Starting app', 'Trying again', 'Restarting', 'Done'];
@@ -2705,6 +2719,7 @@ async function updateApp_(id, btn, item) {
   if (!a || (!a.release && !stopped)) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
   if (!a.update && !stopped) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
   if (runs.get(id) && runs.get(id).state === 'running') return;
+  if (busyStatus(a)) return btn && pop(btn, '', `${a.name} is ${String(a.status).replace(/_/g, ' ')} right now. Wait for that to finish.`);
   const self = id === 'wizardos-tracker';
   wizBusy.set(id, 'Starting…');
   const r = newRun(id, a.name, a.update ? a.latest : null, item, b => updateApp(id, b, item));
@@ -2746,7 +2761,7 @@ async function updateApp_(id, btn, item) {
     wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason, kind: r.kind };
     runEnd(r, false, reason);
   } finally {
-    store.set('board.wizfail', wizFail);
+    store.set('board.wizfail', wizFail); forgetRun(id);
     wizBusy.delete(id); catalog = null; onbox.clear();
     if (self && !wizFail[id]) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
     await loadCatalog(true); paintWizards();
@@ -2754,7 +2769,7 @@ async function updateApp_(id, btn, item) {
   }
 }
 async function updateAll(btn) {
-  const list = ((catalog && catalog.apps) || []).filter(a => a.update && !wizBusy.has(a.id));
+  const list = ((catalog && catalog.apps) || []).filter(a => a.update && !wizBusy.has(a.id) && !busyStatus(a));
   if (!list.length) return pop(btn, '', 'Every app is up to date.');
   askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => { for (const a of list) await updateApp(a.id); });
 }
@@ -2802,6 +2817,72 @@ async function followOS(r, from) {
   runs.set('os', r);
   followOS(r, o.from).catch(e => { runEnd(r, false, e.message); store.set('board.osrun', null); });
 })();
+// ---------- 0.36.3 An app update survives a reload (Jan, 16 Nov) ----------
+// ⌘R in the middle of an app update dropped the in-page run, so the page offered Update again while the App Manager
+// was still updating. Now the page asks the box instead of remembering taps: for every app this device started an
+// update of (board.appruns), every app with an update and every app whose status says an operation runs, it reads the
+// App Manager's job (GET store-install/<id>, the job a tap follows) and the app's own status. A job still installing,
+// or an app updating / backing up / restoring (the nightly run, Settings › Apps, another device), gets its progress
+// panel back and no Update button; a job this device started that ended while the page was away says how it ended.
+// Nothing is ever posted again, and no automatic second try runs on a picked-up update (Retry is the owner's tap).
+// WizardOS updates the same way: _updates says installing and this page has no run -> its panel, no Update.
+let resuming = null;
+function resumeRuns() { return resuming || (resuming = resumeRuns_().catch(() => {}).finally(() => { resuming = null; })); }
+async function resumeRuns_() {
+  const kept = keptRuns(), apps = (catalog && catalog.apps) || [];
+  for (const [id, k] of Object.entries(kept)) if (!k || Date.now() - k.at > UPDATE_WAIT_MS + 10 * 60000) forgetRun(id);
+  const ids = new Set([...Object.keys(keptRuns()), ...apps.filter(a => a.update || UPDATING_STATUS.has(a.status)).map(a => a.id)]);
+  const idle = [...ids].filter(id => !(runs.get(id) && runs.get(id).state === 'running') && !wizBusy.has(id));
+  await Promise.all(idle.map(async id => {
+    let j = null;
+    try { j = await getJSON(STORE_INSTALL + encodeURIComponent(id)); } catch (_) {}
+    if ((runs.get(id) && runs.get(id).state === 'running') || wizBusy.has(id)) return;   // a tap got there first
+    const k = keptRuns()[id], a = fresh(id);
+    const mine = !!(k && j && j.started && j.started * 1000 >= k.at - 60000);   // the job this device started
+    if (j && j.state === 'installing') return void followResumed(id, a, k, j);
+    if (mine && (j.state === 'installed' || j.state === 'failed')) return void followResumed(id, a, k, j);
+    if (a && UPDATING_STATUS.has(a.status)) return void followResumed(id, a, k, null);
+    if (k && !busyStatus(a)) forgetRun(id);   // no job and not busy: nothing left to pick up
+  }));
+  if (updates && updates.installing && !runs.get('os')) {
+    const to = updates.latest_for_channel || (updates.channel === 'latest' ? updates.latest : updates.stable);
+    const r = newRun('os', 'WizardOS', to, null, b => updateWizardOS(b), updates.quick);
+    runStep(r, 'Installing', '');
+    followOS(r, updates.installed).catch(e => runEnd(r, false, e.message));
+  }
+}
+async function followResumed(id, a, k, j) {
+  const self = id === 'wizardos-tracker', name = (a && a.name) || (k && k.name) || id;
+  const to = (k && k.to) || (a && a.latest) || null, from = (k && k.from) || (a && a.version) || null;
+  const r = newRun(id, name, to, null, b => updateApp(id, b));
+  r.kind = 'update'; r.steps = UPD_STEPS;
+  r.at = (k && k.at) || (j && j.started ? j.started * 1000 : Date.now());
+  wizBusy.set(id, 'Updating…');
+  runStep(r, 'Installing', j ? '' : 'Started on this Wizard');
+  try {
+    if (j) facts.apps[id] = await followJob({ id, name, latest: to, version: from }, r, self, false, STORE_INSTALL + encodeURIComponent(id), j);
+    else {
+      // No job here (the nightly run, Settings › Apps, or the App Manager restarted): wait for the app's own status.
+      let b = a;
+      for (const end = r.at + UPDATE_WAIT_MS; busyStatus(b) && Date.now() < end;) { await sleep(3000); catalog = null; await loadCatalog(true); b = fresh(id); }
+      if (busyStatus(b)) throw new Error(`${name} is still ${String(b.status).replace(/_/g, ' ')}. Refresh later to see whether it finished.`);
+      if (isStopped(b)) throw new Error(stoppedWhy(name, to));
+      runStep(r, 'Restarting', '');
+      facts.apps[id] = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', to, null, name, 150, !to);
+    }
+    delete wizFail[id]; runEnd(r, true);
+  } catch (e) {
+    wizFail[id] = { at: Date.now(), name, to, reason: e.message, kind: 'update' };
+    runEnd(r, false, e.message);
+  } finally {
+    store.set('board.wizfail', wizFail); forgetRun(id);
+    wizBusy.delete(id); catalog = null; onbox.clear();
+    // (a page that already runs the new Tracker does not reload again)
+    if (self && !wizFail[id] && facts.apps[id] !== PAGE_VERSION) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
+    await loadCatalog(true); paintWizards();
+    if (cache[view]) { render(cache[view]); checkOnBox([...((cache[view].groups || {}).test || [])]); }
+  }
+}
 // 0.18: the Update manager lives in Settings only (no separate view or header button). openUM opens Settings at an app.
 let umFocus = null;
 function openUM(focusId) {
@@ -2819,6 +2900,7 @@ function runningSelf(a) {
 async function showWizards(force) {
   if (!catalog) el('um-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   await loadCatalog(force);
+  await resumeRuns();   // 0.36.3: an update still running on the box shows as running, never as Update
   paintWizards();
 }
 function paintWizards() {
@@ -2852,7 +2934,7 @@ function paintWizards() {
     const r = make('div', 'bd-rowx bd-wiz-app' + (a.id === umFocus ? ' focus' : ''));
     r.dataset.app = a.id;
     const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
-    const busy = wizBusy.get(a.id);
+    const busy = wizBusy.get(a.id) || (busyStatus(a) ? cap(String(a.status).replace(/_/g, ' ')) + '…' : '');
     const where = a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
     t.append(make('span', 'bd-meta', [a.version || '?', where, a.status && a.status !== 'running' ? a.status : ''].filter(Boolean).join(' · ')));
     r.append(t);
@@ -2896,7 +2978,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.2';
+const PAGE_VERSION = '0.36.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2925,7 +3007,7 @@ let allBusy = false;
 function pendingUpdates() {
   // the Tracker's own entry is judged by the version this page runs (runningSelf), never a stale catalog
   const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a)
-    .filter(a => a && a.update && !wizBusy.has(a.id));
+    .filter(a => a && a.update && !wizBusy.has(a.id) && !busyStatus(a));
   const self = apps.find(a => a.id === 'wizardos-tracker');
   const list = apps.filter(a => a.id !== 'wizardos-tracker').map(a => ({ key: a.id, name: a.name }));
   if (updates && updates.update_available && !updates.installing) list.push({ key: 'os', name: 'WizardOS' });
@@ -2949,7 +3031,7 @@ function selfUpdate() {
   box.className = 'bd-selfupd'; box.hidden = false; box.replaceChildren(t, go);
 }
 async function checkSelfUpdate(force) {
-  try { await loadCatalog(force); } catch (_) {}
+  try { await loadCatalog(force); await resumeRuns(); } catch (_) {}
   selfUpdate();
 }
 setTimeout(() => checkSelfUpdate(false), 1500);
@@ -2959,7 +3041,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

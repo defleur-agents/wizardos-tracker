@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.36.2
+version: 0.36.3
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -160,6 +160,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
 
 **0.36.2** The automatic second try never starts while the App Manager still says the app is updating (since wizard-app-manager PR 712 a slow update reports an error while it still runs): it says "<app> is still updating. Refresh in a few minutes…" instead. The App Manager refuses such an update too (PR 716).
+
+**0.36.3** (Jan, 16 Nov) **An update survives a reload.** Reloading the Tracker (⌘R) while an app was updating dropped the progress, so it offered Update again for an update still running. Now it asks the box: the App Manager's job for each app (and each app's own status, so an update started by the nightly run, Settings or another device counts too). A running update gets its progress panel back and no Update button; one that finished while the page was away says how it ended. Nothing is posted twice. A WizardOS update that is installing shows its panel the same way.
 
 **0.36.1** (seen live on oscar-main) Settings shows a Start or Update's steps, time and Retry right under that app's row (it was only on cards; Settings showed just the button text), the "is stopped, tap Start" line sits above the list it points to, and a failed start reads "<app> didn't start: …" instead of "Last failed update".
 
