@@ -1527,6 +1527,7 @@ function whereLine(i) {
   if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
   if (g === 'building') return ['The builder is on it', ''];
   if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
+  if (g === 'sorting' && i.pre_approved) return ['Approved · the builder files it in the right place, then starts', ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
   if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
@@ -1780,7 +1781,7 @@ function actionArea(i, inDetail) {
     if (!tg && !inDetail) row.append(...howTo(i));
     return row;
   }
-  if (g === 'james') {
+  if (g === 'james' || (g === 'sorting' && i.sort_approve)) {   // 0.36.5: Approve also while it is being sorted
     if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), greyBtn('Decline', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
     const yes = smallBtn('Approve', b => askPop(b, 'Approve this core feature? The builder may start on it.', 'Approve', () => james(i, 'approve', '', b)));
     yes.classList.add('bd-mini-go');
@@ -2982,7 +2983,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.4';
+const PAGE_VERSION = '0.36.5';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3055,7 +3056,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.4' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.5' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
