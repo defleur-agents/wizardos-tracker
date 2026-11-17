@@ -704,6 +704,11 @@ a.bd-ghlink { text-decoration: none; }
 .rr-text { height: auto; min-height: 120px; padding: 12px 14px; border-radius: var(--r-tile); line-height: 1.45; resize: vertical; font: inherit; }
 .rr-warn { margin: 0; padding: 10px 12px; border-radius: var(--r-tile); background: color-mix(in srgb, var(--warn, var(--accent)) 14%, transparent); color: var(--ink); font-size: var(--wz-text-sm); line-height: 1.4; }
 .rr-warn .bd-mini { margin-left: 4px; }
+.rr-ux { display: flex; gap: 8px; align-items: flex-start; font-size: var(--wz-text-sm); color: var(--ink); line-height: 1.4; cursor: pointer; }
+.rr-ux[hidden] { display: none; }
+.rr-ux input { margin-top: .2rem; }
+.rr-ux.off { color: var(--ink-3); cursor: default; }
+.rr-ux-why { color: var(--ink-3); }
 .rr-auto { margin: 0; font-size: var(--wz-text-xs, .75rem); color: var(--ink-3); }
 .rr-foot { justify-content: flex-end; margin: 0; }
 .rr-landed { margin: 0; font-size: var(--wz-text-md); color: var(--ink); line-height: 1.45; }

@@ -1591,6 +1591,11 @@ function itemCard(i) {
   top.append(h); c.append(top);
   const fb = window.FeedbackStage && FeedbackStage.chip(i);   // 0.26.5: label from-feedback
   if (fb) c.insertBefore(fb, top);
+  if (i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'))) {   // 0.37.0
+    const ux = make('span', 'bd-fbchip src small', 'UX tweak · auto-approved');
+    ux.title = 'Robert\u2019s fast lane: approved as filed, no show-and-tell';
+    c.insertBefore(ux, top);
+  }
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
   const tag = checkTag(i);
@@ -3004,7 +3009,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.6';
+const PAGE_VERSION = '0.37.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3077,7 +3082,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.6' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

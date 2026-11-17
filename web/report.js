@@ -45,6 +45,15 @@
       if (typeof api.onUpdate === 'function') { const b = mk('button', 'bd-mini', 'Update'); b.type = 'button'; b.onclick = () => api.onUpdate(b); w.append(b); }
     }
     $('rr-shot-row').hidden = !(opts && opts.screenshots);
+    // 0.37.0: UX tweak box on ideas (same for everyone; greyed with the reason unless you may file one)
+    const ux = (opts && opts.ux_tweak) || null, uxRow = $('rr-ux-row');
+    if (uxRow) {
+      uxRow.hidden = !(kind === 'feature' && ux);
+      const can = !!(ux && ux.can);
+      $('rr-ux').disabled = !can; if (!can) $('rr-ux').checked = false;
+      uxRow.classList.toggle('off', !can);
+      $('rr-ux-why').textContent = can ? '· approved as you send it: no waiting for James, you check it with Try it' : '· ' + ((ux && ux.why) || 'Not available.');
+    }
     $('rr-auto').textContent = 'Adds: ' + [wizardVersion() && 'WizardOS ' + wizardVersion(), device()].filter(Boolean).join(' · ');
     $('rr-go').disabled = busy || !(kind && $('rr-text').value.trim().length >= 8);
     $('rr-go').textContent = 'Send';
@@ -139,7 +148,7 @@
     kind = ctx ? 'bug' : null; busy = false;
     shots = shots || attacher($('rr-shot-row'), t => { $('rr-status').textContent = t; });
     shots.clear();
-    $('rr-text').value = ''; $('rr-status').textContent = ''; $('rr-status').classList.remove('note');
+    $('rr-text').value = ''; $('rr-status').textContent = ''; if ($('rr-ux')) $('rr-ux').checked = false; $('rr-status').classList.remove('note');
     $('rr-form').hidden = false; $('rr-done').hidden = true;
     paint();
     $('rr-snap').textContent = 'Attach a screenshot of this screen';
@@ -157,6 +166,7 @@
     clearTimeout(still); still = setTimeout(() => { if (busy) $('rr-status').textContent = 'Still working…'; }, 8000);
     const c = ctx && ctx.context;
     const body = { kind, text, device: device(), wizard_version: wizardVersion(),
+      ux_tweak: kind === 'feature' && $('rr-ux') && $('rr-ux').checked ? true : undefined,
       screenshots: shots && shots.list().length ? shots.payload() : undefined,
       ...(c ? { context: { repo: c.repo, number: c.number, title: c.title || '', app: c.app || '', app_name: c.app_name || '' }, app_name: c.app_name || undefined } : {}) };
     try {
