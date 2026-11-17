@@ -3009,7 +3009,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.37.0';
+const PAGE_VERSION = '0.37.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3082,7 +3082,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3093,16 +3093,22 @@ const ITEM_RE = /^#item\/([\w.-]+)\/([\w.-]+)\/(\d+)$/;
 async function openLinked() {
   const m = ITEM_RE.exec(location.hash); if (!m) return;
   const repo = m[1] + '/' + m[2], number = Number(m[3]), id = `${repo}#${number}`;
+  const find = w => { const d = cache[w]; return d && Object.values(d.groups || {}).flat().find(i => i.id === id); };
   try {
+    // 0.37.1: the card opens the moment the item itself is in (one small request), not after the whole board has
+    // loaded twice. That took 6+ seconds on a phone, so a tapped link looked like it only opened the list (Miguel,
+    // 17 Nov). Its tab and list follow behind it; the card refreshes once with the list's richer copy.
     const got = await api(`api/issue?repo=${encodeURIComponent(repo)}&number=${number}`);
     const want = got.type === 'goal' ? 'goals' : VIEWS.includes(got.category) ? got.category : got.type === 'bug' ? 'bugs' : null;
+    const first = find(want || view);
+    openDetail(first || got);
     if (want && want !== view) { view = want; markView(); await load(view); }
-    const d = cache[view], hit = d && Object.values(d.groups || {}).flat().find(i => i.id === id);
-    openDetail(hit || got);
+    const hit = find(view);
+    if (hit && !first && openId === id && el('detail').open) openDetail(hit);
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view).then(openLinked); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
