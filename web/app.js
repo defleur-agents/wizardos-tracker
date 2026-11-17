@@ -2825,7 +2825,12 @@ async function updateApp_(id, btn, item) {
 async function updateAll(btn) {
   const list = ((catalog && catalog.apps) || []).filter(a => a.update && !wizBusy.has(a.id) && !busyStatus(a));
   if (!list.length) return pop(btn, '', 'Every app is up to date.');
-  askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => { for (const a of list) await updateApp(a.id); });
+  askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => {
+    // 0.37.3 (Miguel, 17 Nov): three at a time. The App Manager runs one job per app, so different apps update side
+    // by side; three keeps downloads and restarts gentle on a small box.
+    const queue = list.slice();
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => { while (queue.length) await updateApp(queue.shift().id).catch(() => {}); }));
+  });
 }
 async function updateWizardOS(btn, item) { const done = busyOn(btn); try { return await updateWizardOS_(btn, item); } finally { done(); } }
 async function updateWizardOS_(btn, item) {
@@ -3036,7 +3041,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.37.2';
+const PAGE_VERSION = '0.37.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3109,7 +3114,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
