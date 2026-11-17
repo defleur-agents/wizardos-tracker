@@ -157,18 +157,29 @@ function pop(anchor, title, text) {
   if (p.parentNode !== host) host.append(p);
   p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => typeof t === 'string' ? make('span', '', t) : t));
   p.hidden = false; popFor = anchor;
-  const r = anchor.getBoundingClientRect(), w = Math.min(260, innerWidth - 24);
+  const r = anchor.getBoundingClientRect(), { lo, hi, top, bottom } = popRoom(host), w = Math.min(260, hi - lo);
   p.style.width = w + 'px';
   // a sheet can be the containing block of a fixed element inside it: place, measure, correct
-  p.style.left = Math.max(12, Math.min(innerWidth - w - 12, r.left + r.width / 2 - w / 2)) + 'px';
+  // 0.36.6 (wizardos-tracker issue 102): inside a sheet it stays within the sheet (its overflow clips anything past its edges)
+  p.style.left = popLeft(r, w, lo, hi) + 'px';
   const below = r.bottom + 8, h = p.offsetHeight;
-  p.style.top = (below + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : below) + 'px';
+  p.style.top = (below + h > bottom - 8 ? Math.max(top + 8, r.top - h - 8) : below) + 'px';
   if (host !== document.body) {
     const want = { left: parseFloat(p.style.left), top: parseFloat(p.style.top) }, got = p.getBoundingClientRect();
     p.style.left = (want.left * 2 - got.left) + 'px'; p.style.top = (want.top * 2 - got.top) + 'px';
   }
-  p.classList.toggle('up', below + h > innerHeight - 8);
+  p.classList.toggle('up', below + h > bottom - 8);
 }
+// 0.36.6 (wizardos-tracker issue 102): the room a popover has: the viewport, or the open sheet's box inside it, less a 12px margin
+function popRoom(host) {
+  const b = host && host !== document.body && host.getBoundingClientRect ? host.getBoundingClientRect() : null;
+  const left = Math.max(0, b ? b.left : 0), right = Math.min(innerWidth, b ? b.right : innerWidth);
+  const top = Math.max(0, b ? b.top : 0), bottom = Math.min(innerHeight, b ? b.bottom : innerHeight);
+  const lo = left + 12, hi = Math.max(lo + 120, right - 12);   // never narrower than 120px
+  return { lo, hi, top, bottom };
+}
+// Centred on the anchor, then shifted (never cut) to fit between lo and hi
+const popLeft = (r, w, lo, hi) => Math.max(lo, Math.min(hi - w, r.left + r.width / 2 - w / 2));
 // 0.11: Done and the line stats count items closed since the reset date (policy `since`).
 const sinceText = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 'All time'
   : 'Counted since ' + new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); };
@@ -579,9 +590,9 @@ function stageStat(v, key) {
   const core = v === 'core', bug = v === 'bugs';
   return ({
     james: { t: 'approval', help: 'Waiting for approval: opened → approved by James or Miguel', xs: l => l.map(i => i.approval) },
-    queued: { t: 'queued', help: 'Queued: opened → the builder starts', xs: l => l.map(i => i.wait) },
-    building: core ? { t: 'buildq', help: 'Build queue: approved → built and handed off', xs: l => l.map(i => gap(i.approved_at || i.opened_at, i.handoff_at)) }
-      : { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
+    queued: core ? { t: 'buildq', help: 'Build queue: approved → the builder starts', xs: l => l.map(i => gap(i.approved_at || i.opened_at, i.first_build_at)) }
+      : { t: 'queued', help: 'Queued: opened → the builder starts', xs: l => l.map(i => i.wait) },
+    building: { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
     answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
     airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
     test: { t: 'review', help: 'Human review: ready to try → Works or Needs changes', xs: l => l.flatMap(i => i.review_rounds || []) },
@@ -721,7 +732,7 @@ const STAGE_INFO = {
   checked: 'Whoever filed it said Works, or 7 days passed with no Still broken: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
-  corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
+  corebuild: 'Approved by James or Miguel, waiting for the WizardOS Builder to start. It then moves to Building.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in a comment on the item: any team member’s reply puts it back in the builder’s queue within 10 minutes.',
   test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Needs changes (with what should change). Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
@@ -735,7 +746,9 @@ function binsOf(v) {
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test', 'nextrel'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
-    { key: 'building', word: 'Build queue', groups: ['queued', 'building'], info: 'corebuild' }, ASK, ...tail,
+    // 0.36.6 (James, 17 Nov): Building is its own stage again, so you see whether the builder is working
+    { key: 'queued', word: 'Build queue', groups: ['queued'], info: 'corebuild', tip: 'Approved, waiting for the builder' },
+    { key: 'building', word: 'Building', groups: ['building'], info: 'building', tip: 'The builder is on it' }, ASK, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
@@ -1720,7 +1733,8 @@ function actionArea(i, inDetail) {
     if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true)), moreBtn(i, false)); return row; }
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
-    const yes = smallBtn('Works', b => askPop(b, 'Tag it Checked by you? It stays on its release path.', 'Works', () => tested(i, true, '', b)));
+    // 0.36.6 (wizardos-tracker issue 103): Works is the one way to finish a check: it tags Checked by you and closes it
+    const yes = smallBtn('Works', b => askPop(b, i.state === 'closed' ? 'Mark as works? It is tagged Checked by you.' : 'Mark as works? It closes as fixed, tagged Checked by you.', 'Works', () => tested(i, true, '', b)));
     yes.classList.add('bd-mini-go');
     row.append(yes, smallBtn('Still broken', b => doesntWork(row, i, b)), moreBtn(i, false));
     return row;
@@ -2242,10 +2256,17 @@ function openDetail(i, toAct) {
 }
 // 0.12.2: Mark done / Reopen shows for everyone; only the opener may use it (the server refuses anyone else).
 let detailNow = null;
+// 0.36.6 (wizardos-tracker issue 103): an open bug or feature waiting for its check has one way to finish it: Works (it
+// closes it). Mark done is left off there, for everyone; it stays for goals and items with no check question.
+function checkFinishes(i, d) {
+  if (!i || !d || d.state !== 'open' || d.kind === 'goal' || i.kind === 'goal') return false;
+  if (i.kind === 'bug' && i.shipped) return i.state_reason !== 'not_planned' && !!i.can_review;
+  return i.group === 'test' && !i.nextrel;
+}
 function closeCtl(d) {
   const b = el('d-close');
   detailNow = d;
-  b.hidden = !d || !d.state;
+  b.hidden = !d || !d.state || checkFinishes(d && openItem && openItem.id === d.id ? openItem : null, d);
   if (d && d.state) b.textContent = d.state === 'closed' ? 'Reopen' : d.kind === 'goal' ? 'Close goal' : 'Mark done';
   // 0.17: everyone sees it; it is greyed out (with the reason on tap) for anyone who may not use it
   if (d) b.setAttribute('aria-disabled', String(!d.can_close));
@@ -2408,8 +2429,8 @@ function itemStageTime(v, key, f) {
   const on = (a, b) => a != null ? dur(Math.max(0, (b || Date.now() / 1000) - a)) : null;
   switch (key) {
     case 'james': return f.approved_at || f.state === 'open' ? d(s2.approval) : null;
-    case 'queued': return v === 'core' ? null : f.staged ? d(sp.queued) : 'for ' + dur(sp.queued);
-    case 'building': return v === 'core' ? (f.approved_at ? on(f.approved_at, f.handoff_at) : null) : f.staged && (sp.building || f.build != null) ? dur(sp.building) : null;
+    case 'queued': return v === 'core' ? (f.approved_at ? on(f.approved_at, f.first_build_at) : null) : f.staged ? d(sp.queued) : 'for ' + dur(sp.queued);
+    case 'building': return f.staged && (sp.building || f.build != null) ? dur(sp.building) : null;
     case 'answer': return d(s2.answer);
     case 'airev': return f.staged && (sp.ai || f.ai_tries) ? dur(sp.ai) : null;
     case 'test': return f.staged && (sp.review || f.tries) ? dur(sp.review) : null;
@@ -2983,7 +3004,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.36.5';
+const PAGE_VERSION = '0.36.6';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3056,7 +3077,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.5' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.36.6' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
