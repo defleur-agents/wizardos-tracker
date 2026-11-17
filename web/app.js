@@ -2543,10 +2543,12 @@ async function loadCatalog(force) {
   const apps = (inst.value.wam || []).map(w => {
     const r = rel.get(w.source + ':' + String(w.repo || '').toLowerCase() + ':' + w.id) || (w.source === 'owner-private' ? null : rel.get('standard:' + String(w.repo || '').toLowerCase() + ':' + w.id));
     const latest = r ? r.version : null;
-    const pinned = WITH_OS.has(w.id);   // shipped and pinned by the WizardOS release, not updated one by one
+    // 0.37.2: every app the WizardOS release pins (the App Manager marks them `system`: Claude, ChatGPT, Files,
+    // Notifications…) moves only with WizardOS; the App Manager never takes a Store update for them, so no Update here
+    const pinned = WITH_OS.has(w.id) || !!w.system;
     const cmp = latest ? vcmp(latest, w.version || '') : 0;
     return { id: w.id, name: w.name || w.id, version: w.version || '', commit: w.commit || '', repo: w.repo, source: w.source, status: w.status, system: !!w.system,
-             latest, latestCommit: r ? r.commit : null, release: r, pinned, ahead: cmp < 0,
+             latest, latestCommit: r ? r.commit : null, release: r, pinned, ahead: cmp < 0, held: pinned && cmp > 0,
              update: !pinned && !!(r && r.commit && r.commit !== w.commit) && cmp > 0 };
   }).sort((a, b) => (b.update - a.update) || a.name.localeCompare(b.name));
   catalog = { apps, architecture: inst.value.architecture, complete: inst.value.complete, indexError: idx.status !== 'fulfilled' };
@@ -2719,8 +2721,33 @@ async function followJob(a, r, self, again, url, j) {
   if (!j || j.state !== 'installed') throw tag(new Error((j && j.error ? String(j.error).split('\n')[0].slice(0, 200) : '') || 'The App Manager didn’t finish. Refresh to check.'), !/REFUSED|needs |host access|isolated networks/i.test((j && j.error) || ''));
   if (j.status === 'stopped') throw tag(new Error(stoppedWhy(a.name, a.latest)), true);
   runStep(r, 'Restarting', jobDetail(j));
-  try { return await backUp(self ? 'healthz' : '/' + encodeURIComponent(a.id) + '/healthz', a.latest, self ? me && me.version : a.version, a.name, 150); }
-  catch (e) { throw tag(e, true); }
+  const want = { commit: (j.selection && j.selection.commit) || (a.release && a.release.commit) || null, version: a.latest };
+  try { return self ? await backUp('healthz', a.latest, me && me.version, a.name, 150) : await onBox(a.id, a.name, want, a.version, 150); }
+  catch (e) { throw tag(e, !e.final); }
+}
+// 0.37.2 (Miguel, 17 Nov): what the App Manager lists is the truth about an app's version. Most apps' healthz carries
+// no version (Search, Music, DeFleur, Wisdom…) or isn't there (Claude, ChatGPT), so waiting on it called finished
+// updates failures and ran them twice. Done = the box lists the new commit (or version) and the app runs; `any`: just
+// running (a start keeps its version). The App Manager saying installed while the list still shows the old build is
+// said plainly, never retried.
+async function onBox(id, name, want, had, seconds, any) {
+  let last = null;
+  const t0 = Date.now();
+  for (const end = t0 + seconds * 1000; Date.now() < end; await sleep(2500)) {
+    let w = null;
+    try { w = (((await getJSON(STORE_DATA + 'wizard/v1/installed-apps')) || {}).wam || []).find(x => x.id === id) || null; } catch (_) { continue; }
+    if (!w) continue;
+    last = w;
+    const moved = any || (want.commit ? w.commit === want.commit : want.version ? w.version === want.version : w.version !== had);
+    if (w.status === 'running' && moved) return w.version || '';
+    if (STOPPED.has(w.status)) throw new Error(stoppedWhy(name, want.version));
+    if (w.status === 'running' && Date.now() - t0 > 60000) break;   // running, still the old build after a minute: it didn't take
+  }
+  if (last && last.status === 'running') {
+    const e = new Error(`The App Manager said it finished, but ${name} still runs ${last.version || 'its old build'}${want.version ? ', not ' + want.version : ''}.`);
+    e.final = true; throw e;
+  }
+  throw new Error(last ? `${name} is ${String(last.status).replace(/_/g, ' ')} after ${Math.round(seconds / 60) || 1} minutes.` : `${name} isn’t in the App Manager’s list.`);
 }
 const stoppedWhy = (name, to) => `${name} ended up stopped${to ? ' before reaching ' + to : ''}, so it can’t open.`;
 // 0.36.3: the app updates this device started and the App Manager took, kept until they end (id -> {at, name, to, from})
@@ -2744,7 +2771,7 @@ async function updateApp_(id, btn, item) {
   const a = fresh(id);
   const stopped = isStopped(a);
   if (!a || (!a.release && !stopped)) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
-  if (!a.update && !stopped) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
+  if (!a.update && !stopped) return btn && pop(btn, '', a.held ? `WizardOS keeps ${a.name} at ${a.version}. ${a.latest} is in the Store but only comes with a WizardOS release.` : a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
   if (runs.get(id) && runs.get(id).state === 'running') return;
   if (busyStatus(a)) return btn && pop(btn, '', `${a.name} is ${String(a.status).replace(/_/g, ' ')} right now. Wait for that to finish.`);
   const self = id === 'wizardos-tracker';
@@ -2758,7 +2785,7 @@ async function updateApp_(id, btn, item) {
     if (!a.update) {
       // started only: wait for it to answer (it keeps the version it had)
       runStep(r, 'Restarting', 'Waiting for it to answer');
-      facts.apps[id] = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', a.version, null, a.name, 150, true);
+      facts.apps[id] = self ? await backUp('healthz', a.version, null, a.name, 150, true) : await onBox(id, a.name, {}, a.version, 150, true);
     } else {
       let v;
       try { v = await attemptUpdate(a, r, self, false); }
@@ -2773,7 +2800,7 @@ async function updateApp_(id, btn, item) {
         else runStep(r, 'Starting app', 'It is running');
         catalog = null; await loadCatalog(true);
         const c = fresh(id) || b;
-        if (!c.update) { runStep(r, 'Restarting', ''); v = await backUp('/' + encodeURIComponent(id) + '/healthz', a.latest, null, a.name, 150, true); }
+        if (!c.update) { runStep(r, 'Restarting', ''); v = await onBox(id, a.name, {}, a.version, 150, true); }
         else {
           runStep(r, 'Trying again', 'Its images are already downloaded, so this is quicker');
           try { v = await attemptUpdate(c, r, self, true); }
@@ -2895,7 +2922,7 @@ async function followResumed(id, a, k, j) {
       if (busyStatus(b)) throw new Error(`${name} is still ${String(b.status).replace(/_/g, ' ')}. Refresh later to see whether it finished.`);
       if (isStopped(b)) throw new Error(stoppedWhy(name, to));
       runStep(r, 'Restarting', '');
-      facts.apps[id] = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', to, null, name, 150, !to);
+      facts.apps[id] = self ? await backUp('healthz', to, null, name, 150, !to) : await onBox(id, name, { version: to }, from, 150, !to);
     }
     delete wizFail[id]; runEnd(r, true);
   } catch (e) {
@@ -2966,7 +2993,7 @@ function paintWizards() {
     r.dataset.app = a.id;
     const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
     const busy = wizBusy.get(a.id) || (busyStatus(a) ? cap(String(a.status).replace(/_/g, ' ')) + '…' : '');
-    const where = a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
+    const where = a.held ? `WizardOS keeps it at this version (the Store has ${a.latest}; it comes with a WizardOS release)` : a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
     t.append(make('span', 'bd-meta', [a.version || '?', where, a.status && a.status !== 'running' ? a.status : ''].filter(Boolean).join(' · ')));
     r.append(t);
     // 0.36.0: a stopped app gets a one-tap Start (Start and update when the Store has a newer one)
@@ -3009,7 +3036,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.37.1';
+const PAGE_VERSION = '0.37.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3082,7 +3109,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

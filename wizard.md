@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.37.1
+version: 0.37.2
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,10 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.37.2** (Miguel, 17 Nov) **Updates say what really happened.** Apps the WizardOS release pins (Claude, ChatGPT, Connection Router, Files, Notifications…) no longer show an Update that the App Manager quietly ignores: their row says WizardOS keeps them at that version and which Store version waits for a WizardOS release, and a card whose fix is in one of them says Update WizardOS or Not released yet instead of Update <app>. An app update is done when the App Manager lists the new build running, not when the app's healthz names a version (most apps' don't, so finished updates were called failures and run twice); an update the App Manager calls finished while the old build still runs says so plainly.
+
+**0.37.2** (Miguel, 17 Nov) **Updates tell the truth.** Apps WizardOS pins (Claude, ChatGPT, Connection Router, Files, Notifications…) no longer show an Update that the App Manager always ignores: their row says WizardOS keeps them at that version, and a card waiting on one says Update WizardOS or Not released yet. An app update is judged done by the App Manager's own list (new build, running) instead of the app's healthz, which most apps don't carry, so finished updates no longer read as failed and run twice.
 
 **0.37.1** (Miguel, 17 Nov) **Item links open the card at once.** A `#item/<owner>/<repo>/<number>` link shows the card as soon as that one item is fetched, instead of after the whole board loaded twice (6+ seconds on a phone, so the link looked like it only opened the list).
 
