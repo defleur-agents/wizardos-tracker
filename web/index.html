@@ -155,6 +155,8 @@
           <textarea id="rr-text" class="wz-input rr-text" rows="8" maxlength="8000" aria-labelledby="rr-ask"></textarea>
           <p class="rr-snap-row" id="rr-snap-row" hidden><button type="button" class="bd-mini" id="rr-snap">Attach a screenshot of this screen</button></p>
           <div class="rr-shot" id="rr-shot-row" hidden><!-- 0.24.2: thumbnails + Add a screenshot (report.js attacher) --></div>
+          <!-- 0.37.0: UX tweak (Robert's fast lane); everyone sees it, only UX tweakers can tick it -->
+          <label class="rr-ux" id="rr-ux-row" hidden><input type="checkbox" id="rr-ux"> <span><b>UX tweak</b> <span class="rr-ux-why" id="rr-ux-why"></span></span></label>
           <p class="rr-auto" id="rr-auto"></p>
         </fieldset>
         <p class="wz-status" id="rr-status" role="status" aria-live="polite"></p>

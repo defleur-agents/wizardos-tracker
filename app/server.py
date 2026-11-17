@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.36.6'
+VERSION = '0.37.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1058,8 +1058,50 @@ def report_bug(person, args, agent=False):
     return _create(acct, full, title, body.strip(), 'bug')
 
 
+# ---------- 0.37.0 (Miguel, 17 Nov): UX tweaks, Robert's fast lane ----------
+# A UX tweak stays a feature (label feature + ux-tweak). Only the people in policy ux_tweakers (Robert) may file one.
+# It is approved as it is filed (label james-approved, so a core one never waits for James) and Works by the filer
+# finishes it like an app feature (no show-and-tell): with a switch it goes on for everyone (switch-default).
+UX_LABEL = 'ux-tweak'
+
+
+def ux_tweakers(base=None):
+    base = base or policy_base()
+    return [str(n) for n in base.get('ux_tweakers') or []]
+
+
+def ux_rule(base=None):
+    names = ux_tweakers(base)
+    who = ' or '.join(names) if names else 'nobody'
+    return f'Only {who} can file UX tweaks.'
+
+
+def can_ux_tweak(login, base=None):
+    base = base or policy_base()
+    return bool(login) and person_of(login, base).lower() in {n.lower() for n in ux_tweakers(base)}
+
+
+def ux_lane(acct, args, base=None):
+    """The UX tweak asked for in args (ux_tweak: true) -> (extra labels, body line). Refuses anyone but a UX tweaker."""
+    if not args.get('ux_tweak'):
+        return [], ''
+    base = base or policy_base()
+    login = acct.get('login') or ''
+    if not can_ux_tweak(login, base):
+        raise Problem(403, ux_rule(base), 'not_ux_tweaker')
+    who = person_of(login, base) or login
+    return [UX_LABEL, JAMES_LABEL], (f'\n\n**UX tweak from {who}** \u00b7 auto-approved (fast lane: no approval step, '
+                                     f'no show-and-tell; {who} checks it with Try it)')
+
+
+def _ux_labels(acct, full):
+    _ensure_label(acct, full, UX_LABEL, 'c5def5', 'UX tweak: fast lane, approved on filing (policy ux_tweakers)')
+    _ensure_label(acct, full, JAMES_LABEL, '0e8a16', 'Approved: the builder may start')
+
+
 def report_feature(person, args, agent=False):
-    """A feature to try (label feature): built switched off, tried in the Tracker, kept or dropped."""
+    """A feature to try (label feature): built switched off, tried in the Tracker, kept or dropped.
+    0.37.0: ux_tweak true (UX tweakers only) files it as a UX tweak, approved on filing."""
     _, acct = account_for(person, agent)
     full = _repo(settings()['org'], args.get('repo'))
     if not full:
@@ -1068,7 +1110,10 @@ def report_feature(person, args, agent=False):
     body = args.get('body') or ''
     if not isinstance(body, str) or len(body) > 8000:
         raise Problem(400, 'The description is too long (8000 characters max).')
-    return _create(acct, full, title, body.strip(), 'feature')
+    extra, line = ux_lane(acct, args)
+    if extra:
+        _ux_labels(acct, full)
+    return _create(acct, full, title, body.strip() + line, ['feature'] + extra)
 
 
 def _current(acct, full, number):
@@ -1359,7 +1404,8 @@ def _card(node, tab):
            'waiting': 'ready-to-test' in labels, 'approved': 'approved' in labels,
            'assignees': [a.get('login') for a in (node.get('assignees') or {}).get('nodes') or [] if a and a.get('login')],
            'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body')),
-           'from_feedback': feedback_inbox.FROM_LABEL in labels}   # 0.26.5: a 'From Feedback app' chip
+           'from_feedback': feedback_inbox.FROM_LABEL in labels,   # 0.26.5: a 'From Feedback app' chip
+           'ux_tweak': 'ux-tweak' in labels}   # 0.37.0: a 'UX tweak · auto-approved' chip
     if out['comments'] is None:
         out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
@@ -2996,6 +3042,9 @@ POLICY_DEFAULT = {
     # 0.18.2 (wizard-os#423): who approves core features before the builder starts (team names). Show-and-tell stays
     # James's (open.goals). DATA_DIR/policy.json `core_approvers` overrides.
     'core_approvers': ['James', 'Miguel'],
+    # 0.37.0 (Miguel, 17 Nov): who may file a UX tweak (team names). A UX tweak is a feature with a fast lane: it is
+    # approved on filing (no James approval) and skips show-and-tell. DATA_DIR/policy.json `ux_tweakers` overrides.
+    'ux_tweakers': ['Robert'],
     # 0.35.0: who cuts a Mac build and signs a phone release (team names): a Human review item that needs one waits on them
     'release_people': {'mac': ['James'], 'phone': ['James']},
 }
@@ -3090,12 +3139,14 @@ def policy_base():
     core = [str(x).split('/')[-1].lower() for x in core if isinstance(x, str) and NAME.match(str(x).split('/')[-1])] if isinstance(core, list) else list(CORE_REPOS)
     ca = over.get('core_approvers')
     ca = [str(x) for x in ca if isinstance(x, str) and x.strip()] if isinstance(ca, list) and ca else list(POLICY_DEFAULT['core_approvers'])
+    ux = over.get('ux_tweakers')
+    ux = [str(x) for x in ux if isinstance(x, str) and x.strip()] if isinstance(ux, list) else list(POLICY_DEFAULT['ux_tweakers'])
     rp = {k: list(v) for k, v in POLICY_DEFAULT['release_people'].items()}
     if isinstance(over.get('release_people'), dict):
         rp.update({k: [str(x) for x in v if isinstance(x, str) and x.strip()] for k, v in over['release_people'].items()
                    if k in rp and isinstance(v, list)})
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
-            'core_approvers': ca, 'release_people': rp,
+            'core_approvers': ca, 'release_people': rp, 'ux_tweakers': ux,
             'since': _since(over.get('since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
 
@@ -3937,6 +3988,8 @@ def tested(person, args, works):
         raise Problem(403, rule, 'not_filer')
     if late and closed and (cur.get('state_reason') or '').lower() == 'not_planned':
         raise Problem(409, 'This was closed as not planned. File a new bug if it is still broken.')
+    if cat == 'core' and UX_LABEL in names:   # 0.37.0: a UX tweak skips show-and-tell (finishes like an app feature)
+        cat = 'app'
     to_default = False
     if works and cat == 'app' and DEFAULT_LABEL not in names:
         # 0.26.4 (Miguel, 11 Nov): an approved app feature ships always on. With a switch it stays open with
@@ -4304,8 +4357,12 @@ def report_next(kind, where, org, base=None):
 
 def report_options(person):
     _, acct = account_for(person)
-    return {**reporter.options(), 'core_repos': policy_base()['core_repos'],
-            'screenshots': bool(acct.get('token') and _media_ready(acct['token']))}
+    base = policy_base()
+    can = can_ux_tweak(acct.get('login') or '', base)
+    return {**reporter.options(), 'core_repos': base['core_repos'],
+            'screenshots': bool(acct.get('token') and _media_ready(acct['token'])),
+            # 0.37.0: everyone sees the UX tweak box; only UX tweakers can tick it (greyed with the reason)
+            'ux_tweak': {'can': can, 'why': '' if can else ux_rule(base), 'who': ux_tweakers(base)}}
 
 
 def sorting_approval(cat, labels, approver):
@@ -4432,14 +4489,17 @@ def report_file(person, args, agent=False):
     except reporter.ReportError as e:
         raise Problem(400, str(e)) from None
     where = reporter.triage_where(org)
+    extra, line = ux_lane(acct, args) if kind == 'feature' else ([], '')
     warning = None
     urls, left, why = _attach(acct, shots)
     if left:   # 0.24.2: the text is filed anyway; the screenshots wait on this box and are added later
         warning = SHOT_WAIT.format(s='s' if len(left) > 1 else '', why=why or 'GitHub refused')
     _ensure_label(acct, where['repo'], reporter.TRIAGE_LABEL, 'fbca04', 'Report or request: the builder moves it to the right repo')
-    labels = [reporter.LABELS[kind], reporter.TRIAGE_LABEL]
+    labels = [reporter.LABELS[kind], reporter.TRIAGE_LABEL] + extra
+    if extra:
+        _ux_labels(acct, where['repo'])
     made = _create(acct, where['repo'], reporter.title_of(text),
-                   reporter.triage_body(kind, text, args, shot_urls=urls, waiting=len(left)), labels)
+                   reporter.triage_body(kind, text + line, args, shot_urls=urls, waiting=len(left)), labels)
     url = urls[0] if urls else None
     if left:
         try:
@@ -4477,8 +4537,8 @@ TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
-    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}}, 'required': ['repo', 'title']}},
-    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}}, 'required': ['kind', 'text']}},
+    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
+    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
