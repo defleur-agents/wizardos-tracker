@@ -34,7 +34,7 @@ class Version(unittest.TestCase):
     def test_versions_agree(self):
         from test_013 import S
         v = S.VERSION
-        self.assertEqual(v, '0.37.0')
+        self.assertRegex(v, r'^\d+\.\d+\.\d+$')
         self.assertIn(f"PAGE_VERSION = '{v}'", JS)
         self.assertIn(f"version: '{v}' }})", JS)
         self.assertIn(f'**{v}**', (ROOT / 'wizard.md').read_text())

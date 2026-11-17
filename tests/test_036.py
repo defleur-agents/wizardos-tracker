@@ -14,11 +14,12 @@ HARNESS = r'''
 const vm = require('vm');
 const [src, raw] = process.argv.slice(-2), scen = JSON.parse(raw);
 const calls = [], runsSeen = [];
-let apps = JSON.parse(JSON.stringify(scen.apps));
+let apps = JSON.parse(JSON.stringify(scen.apps)), installedNew = false;
 const answers = scen.answers;   // "METHOD path" -> list of answers, the last one repeats
 function answer(key) {
   const q = answers[key]; if (!q) { const e = new Error('not found'); e.status = 404; throw e; }
   const a = q.length > 1 ? q.shift() : q[0];
+  if (a.body && a.body.state === 'installed') installedNew = true;
   if (a.set) for (const [id, kv] of Object.entries(a.set)) Object.assign(apps.find(x => x.id === id), kv);
   if (a.http) { const e = new Error(a.body.error); e.status = a.http; throw e; }
   return JSON.parse(JSON.stringify(a.body));
@@ -32,7 +33,11 @@ const ctx = {
   busyOn: () => () => {}, pop: (b, t, x) => calls.push('pop ' + x), toast() {}, paintWizards() {}, render() {}, checkOnBox() {},
   jobDetail: () => '',
   loadCatalog: async () => { ctx.catalog = { apps: JSON.parse(JSON.stringify(apps)) }; return ctx.catalog; },
-  getJSON: async (u, init) => { const key = (init && init.method || 'GET') + ' ' + u; calls.push(key + (init ? ' ' + init.body : '')); return answer(key); },
+  STORE_DATA: '/wizard-os-home/store-data/',
+  // 0.37.2: the App Manager's list is how an update is judged done (the new commit, running)
+  getJSON: async (u, init) => { if (u === '/wizard-os-home/store-data/wizard/v1/installed-apps') return { wam: apps.map(a => ({ id: a.id, status: a.status,
+      version: installedNew ? a.latest : a.version, commit: installedNew && a.release ? a.release.commit : 'a'.repeat(40) })) };
+    const key = (init && init.method || 'GET') + ' ' + u; calls.push(key + (init ? ' ' + init.body : '')); return answer(key); },
   newRun: (key, name, to, item, retry) => { const r = { key, name, to, step: 'Starting', detail: '', state: 'running', reason: '', retry, trail: [] }; runsSeen.push(r); ctx.runs.set(key, r); return r; },
   runStep: (r, step, detail) => { if (r.trail[r.trail.length - 1] !== step) r.trail.push(step); r.step = step; r.detail = detail || ''; },
   runEnd: (r, ok, reason) => { r.state = ok ? 'done' : 'failed'; r.reason = reason || ''; },
@@ -146,7 +151,7 @@ class Recover(unittest.TestCase):
 class Start(unittest.TestCase):
     def test_stopped_app_starts_with_one_tap(self):
         out = run([app('stopped', update=False)], {
-            START: [ok({'state': 'starting'})], SJOB: [ok({'state': 'starting'}), ok({'state': 'running', 'status': 'running'})],
+            START: [ok({'state': 'starting'})], SJOB: [ok({'state': 'starting'}), {'body': {'state': 'running', 'status': 'running'}, 'set': {'messenger': {'status': 'running'}}}],
             HEALTH: [ok({'version': '0.2.0-unified.16.31'})],
         })
         self.assertEqual(out['state'], 'done', out)

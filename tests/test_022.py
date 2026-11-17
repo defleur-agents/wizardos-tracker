@@ -85,7 +85,7 @@ class Update(unittest.TestCase):
     def test_polls_job_then_health(self):
         body = JS[JS.index('async function startJob'):JS.index('async function updateAll')]   # 0.36.0: the attempt is its own function
         self.assertLess(body.index("runStep(r, 'Installing'"), body.index("runStep(r, 'Restarting'"))
-        self.assertIn("'/healthz'", body)
+        self.assertIn('onBox(', body)   # 0.37.2: done = the App Manager lists the new build, running
         self.assertIn('jobDetail(j)', body, 'a step the App Manager does name is shown')
         os_ = JS[JS.index('async function followOS'):]
         self.assertIn('u.failure_reason', os_)

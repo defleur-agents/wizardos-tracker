@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.37.1'
+VERSION = '0.37.2'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1692,6 +1692,14 @@ def release_commit(manifest, repo):
     return None
 
 
+def release_default(manifest, repo):
+    """The default app a release pins from `repo` ({app, repo, commit, index_version}), or None."""
+    for c in ((manifest or {}).get('default_apps') or {}).values():
+        if isinstance(c, dict) and str(c.get('repo') or '').lower() == repo.lower() and SHA40.match(str(c.get('commit') or '')):
+            return c
+    return None
+
+
 def store_listing(repo):
     def get():
         try:
@@ -1816,6 +1824,25 @@ def where(token, d, box):
         if chan != 'latest' and in_release(release_pointer(token, 'latest')):
             return 'no', 'Switch to For testers in Settings', None
         return 'no', 'Not released yet', None
+    # 0.37.2 (Miguel, 17 Nov): an app the WizardOS release pins (its default_apps: Claude, ChatGPT, Files,
+    # Notifications…) moves only with a WizardOS release; the App Manager never updates it from the Store, so
+    # "Update <app>" was a button that could never work. Judge it by the release's pinned recipe instead.
+    dflt = release_default(manifest, repo)
+    if dflt:
+        have = in_build(token, repo, sha, dflt['commit'])
+        if have is None:
+            return 'unknown', None, dflt.get('app')
+        if have:
+            return 'yes', None, dflt.get('app')
+        chan = 'latest' if box.get('channel') == 'latest' else 'stable'
+        def in_rel(v):
+            o = release_default(release_manifest(token, v), repo) if v and v != release else None
+            return bool(o) and bool(in_build(token, repo, sha, o['commit']))
+        if in_rel(release_pointer(token, chan)):
+            return 'no', 'Update WizardOS in Settings', dflt.get('app')
+        if chan != 'latest' and in_rel(release_pointer(token, 'latest')):
+            return 'no', 'Switch to For testers in Settings', dflt.get('app')
+        return 'no', 'Not released yet', dflt.get('app')
     app = store_listing(repo)
     if not app:
         return 'unknown', None, None
