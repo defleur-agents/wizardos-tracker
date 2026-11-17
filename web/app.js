@@ -160,7 +160,7 @@ function pop(anchor, title, text) {
   const r = anchor.getBoundingClientRect(), { lo, hi, top, bottom } = popRoom(host), w = Math.min(260, hi - lo);
   p.style.width = w + 'px';
   // a sheet can be the containing block of a fixed element inside it: place, measure, correct
-  // 0.36.6 (wizardos-tracker#102): inside a sheet it stays within the sheet (its overflow clips anything past its edges)
+  // 0.36.6 (wizardos-tracker issue 102): inside a sheet it stays within the sheet (its overflow clips anything past its edges)
   p.style.left = popLeft(r, w, lo, hi) + 'px';
   const below = r.bottom + 8, h = p.offsetHeight;
   p.style.top = (below + h > bottom - 8 ? Math.max(top + 8, r.top - h - 8) : below) + 'px';
@@ -170,7 +170,7 @@ function pop(anchor, title, text) {
   }
   p.classList.toggle('up', below + h > bottom - 8);
 }
-// 0.36.6 (#102): the room a popover has: the viewport, or the open sheet's box inside it, less a 12px margin
+// 0.36.6 (wizardos-tracker issue 102): the room a popover has: the viewport, or the open sheet's box inside it, less a 12px margin
 function popRoom(host) {
   const b = host && host !== document.body && host.getBoundingClientRect ? host.getBoundingClientRect() : null;
   const left = Math.max(0, b ? b.left : 0), right = Math.min(innerWidth, b ? b.right : innerWidth);
@@ -1733,7 +1733,7 @@ function actionArea(i, inDetail) {
     if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true)), moreBtn(i, false)); return row; }
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
-    // 0.36.6 (wizardos-tracker#103): Works is the one way to finish a check: it tags Checked by you and closes it
+    // 0.36.6 (wizardos-tracker issue 103): Works is the one way to finish a check: it tags Checked by you and closes it
     const yes = smallBtn('Works', b => askPop(b, i.state === 'closed' ? 'Mark as works? It is tagged Checked by you.' : 'Mark as works? It closes as fixed, tagged Checked by you.', 'Works', () => tested(i, true, '', b)));
     yes.classList.add('bd-mini-go');
     row.append(yes, smallBtn('Still broken', b => doesntWork(row, i, b)), moreBtn(i, false));
@@ -2256,7 +2256,7 @@ function openDetail(i, toAct) {
 }
 // 0.12.2: Mark done / Reopen shows for everyone; only the opener may use it (the server refuses anyone else).
 let detailNow = null;
-// 0.36.6 (wizardos-tracker#103): an open bug or feature waiting for its check has one way to finish it: Works (it
+// 0.36.6 (wizardos-tracker issue 103): an open bug or feature waiting for its check has one way to finish it: Works (it
 // closes it). Mark done is left off there, for everyone; it stays for goals and items with no check question.
 function checkFinishes(i, d) {
   if (!i || !d || d.state !== 'open' || d.kind === 'goal' || i.kind === 'goal') return false;

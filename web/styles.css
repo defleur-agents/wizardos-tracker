@@ -172,8 +172,10 @@ a.bd-title:hover { text-decoration: underline; }
 }
 
 /* Small anchored popover. */
-.bd-pop { position: fixed; z-index: 30; box-sizing: border-box; max-width: calc(100% - 24px); overflow-wrap: anywhere; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--r-tile); background: var(--wz-panel); color: var(--ink-2); font-size: var(--wz-text-sm); line-height: 1.4; box-shadow: 0 6px 24px color-mix(in srgb, #000 22%, transparent); }
+.bd-pop { position: fixed; z-index: 30; display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--r-tile); background: var(--wz-panel); color: var(--ink-2); font-size: var(--wz-text-sm); line-height: 1.4; box-shadow: 0 6px 24px color-mix(in srgb, #000 22%, transparent); }
 .bd-pop b { color: var(--ink); font-weight: 650; }
+/* 0.36.6 (wizardos-tracker issue 102): its set width is its real width, so it never runs past the sheet */
+.bd-pop { box-sizing: border-box; max-width: calc(100% - 24px); overflow-wrap: anywhere; }
 
 /* Bottleneck stats: small and quiet. */
 .bd-stats { margin: 0 0 var(--wz-space-4); }
