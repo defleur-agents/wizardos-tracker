@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.39.1'
+VERSION = '0.39.2'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -492,7 +492,15 @@ def _note_limit(tid, res, headers, limited=False, message='', now=None):
     now = time.time() if now is None else now
     get = headers.get if hasattr(headers, 'get') else (lambda k: None)
     remaining, reset, retry = _int(get('X-RateLimit-Remaining')), _int(get('X-RateLimit-Reset')), _int(get('Retry-After'))
-    res = {'core': 'core', 'graphql': 'graphql', 'search': 'search'}.get(str(get('X-RateLimit-Resource') or '').lower(), res)
+    # 0.39.2: GitHub names the budget an answer counted against (core, graphql, search, code_search, …). Any other
+    # budget is kept under its own name, so its numbers never stand in for core's; a refusal also blocks the
+    # budget this kind of call was going to use.
+    named = re.sub(r'[^a-z_]', '', str(get('X-RateLimit-Resource') or '').lower())[:40]
+    if named and named != res:
+        if limited:
+            _note_limit(tid, res, {'Retry-After': get('Retry-After'), 'X-RateLimit-Reset': get('X-RateLimit-Reset')},
+                        limited=True, message=message, now=now)
+        res = named
     until = 0
     if retry is not None and (limited or retry > 0):
         until = now + max(1, retry)
@@ -531,7 +539,7 @@ def _limits_load(now=None):
     kept = _read('github_limits.json', {})
     for k, v in (kept.items() if isinstance(kept, dict) else []):
         t, _, r = str(k).partition(':')
-        if r in ('core', 'graphql', 'search') and isinstance(v, dict) and (_int(v.get('until')) or 0) > now:
+        if re.fullmatch(r'[a-z_]{1,40}', r) and isinstance(v, dict) and (_int(v.get('until')) or 0) > now:
             with LOCK:
                 _limits[(t, r)] = {'remaining': _int(v.get('remaining')), 'reset': _int(v.get('reset')),
                                    'until': min(_int(v['until']), now + RATE_MAX_WAIT), 'at': _int(v.get('at'))}

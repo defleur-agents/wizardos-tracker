@@ -120,6 +120,28 @@ class RateLimitGuard(Isolated):
             S.gh(TOK, 'GET', '/search/issues?q=y')
         self.assertTrue(S.budget_ok(TOK))
 
+    def test_another_budget_never_stands_in_for_core(self):
+        """0.39.2: an answer counted against another budget keeps its own row."""
+        Mock.answer = (200, {'X-RateLimit-Remaining': 900, 'X-RateLimit-Reset': int(time.time()) + 900, 'X-RateLimit-Resource': 'core'}, {})
+        S.gh(TOK, 'GET', '/repos/o/r', cache=False)
+        Mock.answer = (200, {'X-RateLimit-Remaining': 5000, 'X-RateLimit-Reset': int(time.time()) + 3600, 'X-RateLimit-Resource': 'integration_manifest'}, {})
+        S.gh(TOK, 'GET', '/repos/o/r/x', cache=False)
+        self.assertEqual(S.budget_of(TOK)['core']['remaining'], 900)
+        self.assertEqual(S.budget_of(TOK)['integration_manifest']['remaining'], 5000)
+        self.assertFalse(S.budget_ok(TOK))
+        # a refusal on a named budget also stops the calls of this kind
+        Mock.answer = (403, {'X-RateLimit-Remaining': 0, 'X-RateLimit-Reset': int(time.time()) + 120, 'X-RateLimit-Resource': 'code_search'},
+                       {'message': 'API rate limit exceeded'})
+        with self.assertRaises(S.Problem):
+            S.gh(TOK, 'GET', '/search/code?q=x')
+        n = len(Mock.hits)
+        with self.assertRaises(S.Problem):
+            S.gh(TOK, 'GET', '/search/code?q=y')
+        self.assertEqual(len(Mock.hits), n)
+        S._limits.clear()
+        S._limits_load()
+        self.assertTrue(S._rate_wait(S._tid(TOK), 'code_search') > 0, 'kept across a restart under its own name')
+
     def test_graphql_rate_limited_answer_blocks_graphql(self):
         Mock.answer = (200, {'X-RateLimit-Remaining': 0, 'X-RateLimit-Reset': int(time.time()) + 600, 'X-RateLimit-Resource': 'graphql'},
                        {'errors': [{'type': 'RATE_LIMITED', 'message': 'API rate limit exceeded'}]})
