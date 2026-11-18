@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.37.3'
+VERSION = '0.38.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2463,9 +2463,16 @@ def goal_card(n, login, base):
                 can_close=goal_closer(login, base), close_rule=f'Only {goal_closers_text(base)} closes a goal.',
                 all_done=bool(tasks) and all(t['done'] for t in tasks), mine=same_person(author, login, base))
     # 0.18.2: the viewer's turn on a goal = they own it (assignee) and it needs a status update (none yet, or old)
+    # 0.38.0: Pending final review is James's turn (check it and close it, or send it back), never the owners'
     me = person_of(login, base).lower()
     owns = bool(login) and me in {person_of(a, base).lower() for a in assignees or []}
-    card['turn'] = owns and (not card['status'] or bool(card['status'].get('stale')))
+    st = card['status'] or {}
+    if st.get('status') == 'review':
+        card['turn'] = bool(card['can_close'])
+        card['turn_why'] = REVIEW_WHY if card['turn'] else ''
+    else:
+        card['turn'] = owns and (not st or bool(st.get('stale')))
+        card['turn_why'] = 'Your goal needs a status' if card['turn'] else ''
     return card
 
 
@@ -2620,7 +2627,8 @@ def needs_you_split(splits):
     - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
       Miguel's badge never counts James's approvals of other people's ideas;
     - show   (show-and-tell): James only;
-    - goals: the viewer owns it and its status is missing or stale.
+    - goals: the viewer owns it and its status is missing or stale; 0.38.0: a goal Pending final review counts for
+      James (who closes goals: 'Goal says it is done: check and close it') and not for its owners.
     0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
     release, a question to another person) goes to `waiting` [{id, title, who, what, link}] instead of the count."""
     out, waiting, seen = [], [], set()
@@ -2640,7 +2648,7 @@ def needs_you_split(splits):
                 elif g == 'show' and turn and james:
                     why = 'Show-and-tell for you'
                 elif g == 'goals' and turn:
-                    why = 'Your goal needs a status'
+                    why = c.get('turn_why') or 'Your goal needs a status'
                 iid = c.get('id')
                 if not (why and iid) or iid in seen:
                     continue
@@ -3728,7 +3736,7 @@ def issue_detail(person, args):
     if goal and isinstance(raw, dict):   # the HTML read has no markdown body; the done-list comes from the raw one
         goal.update({k: v for k, v in goal_flags(raw.get('body') or '', [a.get('login') for a in raw.get('assignees') or [] if isinstance(a, dict)],
                                                  who(it), acct.get('login') or '').items()})
-    if kind == 'goal':   # 0.18: status history (comments whose first line is 'Status: green|yellow|red')
+    if kind == 'goal':   # 0.18: status history (comments whose first line is 'Status: working|blocked|review'; old colours map)
         raw_rows = _issue_comments(acct, full, number, count)
         goal['status_history'] = status_of([(((c.get('user') or {}).get('login') or ''), c.get('body') or '', c.get('created_at')) for c in raw_rows if isinstance(c, dict)])
         goal['can_status'] = can_update_goal(acct.get('login') or '', [a.get('login') for a in it.get('assignees') or [] if isinstance(a, dict)])
@@ -4256,14 +4264,28 @@ def drop_item(person, args, agent=False):
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'kind': cat, 'label': label, 'cleanup': cleanup,
             'labels': _labels(after), 'state': after.get('state'), 'by': who, 'saved': True}
 
-# ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: green|yellow|red', then the text ----------
-STATUS_LINE = re.compile(r'^[ \t>*_]*status[*_]*\s*:\s*[*_]*(green|yellow|red)\b[*_]*[ \t.]*(?:\n|$)', re.I)
-STATUS_WORDS = {'green': 'On track', 'yellow': 'At risk', 'red': 'Blocked'}
+# ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: <status>', then the text ----------
+# 0.38.0 (Miguel, 18 Nov: "the goal of a goal is that the person doing the goal should want to close them"): no more
+# traffic lights that reward saying 'on track'. A goal is `working` (In progress, neutral), `blocked` (Blocked) or
+# `review` (Pending final review: the owner thinks it's done; James checks it and closes it or sends it back).
+# Old comments still read: green/yellow -> working, red -> blocked. Old callers' colour values map the same way.
+STATUS_LINE = re.compile(r'^[ \t>*_]*status[*_]*\s*:\s*[*_]*(working|blocked|review|green|yellow|red)\b[*_]*[ \t.]*(?:\n|$)', re.I)
+STATUS_WORDS = {'working': 'In progress', 'blocked': 'Blocked', 'review': 'Pending final review'}
+STATUS_OLD = {'green': 'working', 'yellow': 'working', 'red': 'blocked'}
 STATUS_STALE = 7 * 86400
+REVIEW_WHY = 'Goal says it is done: check and close it'
+
+
+def status_value(v):
+    """'working' | 'blocked' | 'review' from a new value or an old colour (green/yellow -> working, red -> blocked); else None."""
+    v = str(v or '').strip().lower()
+    v = STATUS_OLD.get(v, v)
+    return v if v in STATUS_WORDS else None
 
 
 def status_of(rows, base=None):
-    """[(login, body, created_at)] oldest first -> status history, newest first: {color, word, text, by, by_person, at}."""
+    """[(login, body, created_at)] oldest first -> status history, newest first: {status, color, word, text, by, by_person, at}.
+    `color` repeats `status` for old readers (it is no longer a colour)."""
     base = base or policy_base()
     names = display_names(base)
     out = []
@@ -4271,9 +4293,9 @@ def status_of(rows, base=None):
         m = STATUS_LINE.match(body or '')
         if not m:
             continue
-        color = m.group(1).lower()
+        st = status_value(m.group(1))
         text = (body or '')[m.end():].strip()
-        out.append({'color': color, 'word': STATUS_WORDS[color], 'text': _plain(text, 600), 'by': who,
+        out.append({'status': st, 'color': st, 'word': STATUS_WORDS[st], 'text': _plain(text, 600), 'by': who,
                     'by_name': names.get((who or '').lower(), who), 'by_person': person_of(who, base), 'at': at})
     out.reverse()
     return out
@@ -4301,15 +4323,16 @@ def can_update_goal(login, assignees, base=None):
 
 
 def goal_status_set(person, args, agent=False):
-    """POST /api/goal/status {repo, number, color green|yellow|red, text}; MCP goal_status_set. The goal's owners or
-    James (an agent posts for its own person, who must be one of them)."""
+    """POST /api/goal/status {repo, number, status working|blocked|review, text}; MCP goal_status_set. The goal's owners or
+    James (an agent posts for its own person, who must be one of them). 0.38.0: `status` (or the old `color` field, whose
+    green/yellow mean working and red blocked)."""
     _, acct = account_for(person, agent)
     full, number = _target(args)
     login = acct.get('login') or ''
     base = policy_base()
-    color = str(args.get('color') or '').strip().lower()
-    if color not in STATUS_WORDS:
-        raise Problem(400, 'color must be green, yellow or red.')
+    st = status_value(args.get('status') or args.get('color'))
+    if not st:
+        raise Problem(400, 'status must be working, blocked or review.')
     text = _text(args.get('text'), 'Status text', 3, 600)
     cur = _current(acct, full, number)
     if 'goal' not in _labels(cur):
@@ -4317,9 +4340,9 @@ def goal_status_set(person, args, agent=False):
     assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
     if not can_update_goal(login, assignees, base):
         raise Problem(403, goal_updaters_rule(assignees, base), 'not_goal_owner')
-    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': f'Status: {color}\n\n{text}'})
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': f'Status: {st}\n\n{text}'})
     _forget(acct['token'])
-    return {'id': f'{full}#{number}', 'saved': True, 'status': {'color': color, 'word': STATUS_WORDS[color], 'text': text,
+    return {'id': f'{full}#{number}', 'saved': True, 'status': {'status': st, 'color': st, 'word': STATUS_WORDS[st], 'text': text,
             'by': login, 'by_person': person_of(login, base), 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'stale': False}}
 
 
@@ -4577,8 +4600,8 @@ TOOLS = [
     {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
     {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope (for a goal: that this slice moves its next done-list item forward), then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try (write the steps after 'Human test:'). Bugs and features then get Works / Doesn't work from whoever filed them; core features then go to James's show-and-tell. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
     {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
-    {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). color green = On track, yellow = At risk, red = Blocked; text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <color>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'color': {'type': 'string', 'enum': ['green', 'yellow', 'red']}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['color', 'text']}},
-    {'name': 'goal_status_get', 'description': "A goal's latest status (color, words, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
+    {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). status: working = In progress, blocked = Blocked, review = Pending final review (the owner thinks it is done; James checks it and closes it or sends it back). The old color field still works (green/yellow = working, red = blocked). text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <status>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'status': {'type': 'string', 'enum': ['working', 'blocked', 'review']}, 'color': {'type': 'string', 'enum': ['working', 'blocked', 'review', 'green', 'yellow', 'red'], 'description': 'Old name for status (green/yellow = working, red = blocked).'}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['text']}},
+    {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
@@ -4618,7 +4641,7 @@ def rpc(msg):
                  'instructions': AGENT_UPDATE + 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
                                  "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell. "
-                                 "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set; only James closes a goal. "
+                                 "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set (working, blocked, or review when they think it is done); only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
             r = {'tools': TOOLS}
