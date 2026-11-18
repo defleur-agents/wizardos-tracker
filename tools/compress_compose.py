@@ -40,6 +40,13 @@ else:
     i = re.compile(r"\n    [A-Za-z_][\w-]*:").search(raw, c + 1).start()
     raw = raw[:i] + "".join(f"\n    - {p}" for p in parts) + raw[i:]
     path.write_text(raw)
+# 0.39.1: `wam package-inline` writes mem_limit 128m; the Tracker's release warm-up needs more (a 128 MB box was
+# OOM-killed in a loop and drained its user's GitHub budget). 512 MB, no swap on top.
+raw = path.read_text()
+if "    mem_limit: 128m\n" in raw:
+    path.write_text(raw.replace("    mem_limit: 128m\n", "    mem_limit: 512m\n    memswap_limit: 512m\n", 1))
+service = next(iter(yaml.safe_load(path.read_text())["services"].values()))
+assert service["mem_limit"] == "512m" and service["memswap_limit"] == "512m", service.get("mem_limit")
 cmd = next(iter(yaml.safe_load(path.read_text())["services"].values()))["command"]
 longest = max(len(a) for a in cmd)
 compile(cmd[2], "start", "exec")
