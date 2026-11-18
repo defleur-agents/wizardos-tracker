@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.39.0'
+VERSION = '0.39.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -428,7 +428,11 @@ def public_account(acct):
 
 # ---------- GitHub client (60 s read cache per token) ----------
 
-_cache = {}
+# 0.39.1 (James, 18 Nov): the read cache is bounded in bytes, not just entries. Search pages are ~200-300 KB of JSON
+# (several MB as Python objects); 500 of them OOM-killed a 128 MB box. Answers over CACHE_ITEM_MAX are not kept, and
+# the oldest go first once the kept JSON passes CACHE_MAX_BYTES.
+_cache = {}   # key -> (time, answer, JSON bytes)
+CACHE_ITEM_MAX, CACHE_MAX_BYTES, CACHE_MAX_ITEMS = 512 * 1024, 8 * 1024 * 1024, 500
 
 
 def _tid(token):
@@ -440,6 +444,121 @@ def _forget(token):
     with LOCK:
         for k in [k for k in _cache if k[0] == t]:
             _cache.pop(k, None)
+
+
+# ---------- 0.39.1 GitHub budget guard (James, 18 Nov) ----------
+# A GitHub user has ONE 5,000/hour REST budget shared by every app and box they are signed in on. A Tracker that kept
+# asking after GitHub said 'limit reached' (or a crash-looping one re-asking everything) drained it for every box.
+# Each answer's X-RateLimit-Remaining / -Reset is kept per token and budget (core REST, graphql, search); once a budget
+# is spent (Remaining 0, a 403/429 rate-limit answer, Retry-After, a secondary limit) every further call on it fails
+# at once, without a request, until GitHub's reset time. The background warm-up also sits out while Remaining is low.
+RATE_LOW = 1000            # the warm-up skips its round below this many REST calls left
+RATE_SECONDARY = 60        # a secondary limit with no Retry-After: wait at least a minute (GitHub's advice)
+RATE_MAX_WAIT = 3700       # never trust a reset more than an hour away (a skewed box clock)
+_limits = {}               # (token id, budget) -> {'remaining', 'reset', 'until', 'at'}
+
+
+def _resource(method, path):
+    if method == 'GRAPHQL' or path.startswith('/graphql'):
+        return 'graphql'
+    return 'search' if path.startswith('/search/') else 'core'
+
+
+def _int(v):
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _back_in(seconds):
+    """'GitHub limit reached; back in 12 minutes.' (no clock time, so no time zone to get wrong)."""
+    m = max(1, -(-int(seconds or 0) // 60))
+    return 'GitHub limit reached; back in ' + ('a minute.' if m == 1 else f'{m} minutes.')
+
+
+def _limited(tid, res, now=None):
+    """Seconds until budget `res` of token `tid` is usable again (0: go ahead)."""
+    now = time.time() if now is None else now
+    with LOCK:
+        row = _limits.get((tid, res))
+    until = (row or {}).get('until') or 0
+    return until - now if until > now else 0
+
+
+def _note_limit(tid, res, headers, limited=False, message='', now=None):
+    """Keep what GitHub said about the budget; with `limited` (GitHub refused for a rate limit) block it until the
+    reset. Returns the seconds blocked (0 when not blocked)."""
+    now = time.time() if now is None else now
+    get = headers.get if hasattr(headers, 'get') else (lambda k: None)
+    remaining, reset, retry = _int(get('X-RateLimit-Remaining')), _int(get('X-RateLimit-Reset')), _int(get('Retry-After'))
+    res = {'core': 'core', 'graphql': 'graphql', 'search': 'search'}.get(str(get('X-RateLimit-Resource') or '').lower(), res)
+    until = 0
+    if retry is not None and (limited or retry > 0):
+        until = now + max(1, retry)
+    elif remaining == 0 and reset:
+        until = reset + 1
+    elif limited:
+        until = reset + 1 if reset and reset > now and 'secondary' not in message.lower() else now + RATE_SECONDARY
+    if until:
+        until = min(until, now + RATE_MAX_WAIT)
+    if remaining is None and not until:
+        return 0
+    with LOCK:
+        row = dict(_limits.get((tid, res)) or {})
+        was = row.get('until') or 0
+        if remaining is not None:
+            row.update(remaining=remaining, reset=reset)
+        row.update(at=int(now), until=max(until, was) if was > now else until)
+        _limits[(tid, res)] = row
+        if len(_limits) > 200:
+            for k in sorted(_limits, key=lambda k: _limits[k].get('at') or 0)[:50]:
+                _limits.pop(k, None)
+        blocked = row['until'] > now
+        if blocked and until:
+            kept = {f'{t}:{r}': v for (t, r), v in _limits.items() if (v.get('until') or 0) > now}
+    if blocked and until:
+        try:
+            _write('github_limits.json', kept)   # token ids (hash prefixes) only, never a token
+        except OSError:
+            pass
+    return max(0, row['until'] - now) if blocked else 0
+
+
+def _limits_load(now=None):
+    """At start: a block that is still running carries over a restart (a restart never buys more requests)."""
+    now = time.time() if now is None else now
+    kept = _read('github_limits.json', {})
+    for k, v in (kept.items() if isinstance(kept, dict) else []):
+        t, _, r = str(k).partition(':')
+        if r in ('core', 'graphql', 'search') and isinstance(v, dict) and (_int(v.get('until')) or 0) > now:
+            with LOCK:
+                _limits[(t, r)] = {'remaining': _int(v.get('remaining')), 'reset': _int(v.get('reset')),
+                                   'until': min(_int(v['until']), now + RATE_MAX_WAIT), 'at': _int(v.get('at'))}
+
+
+def budget_ok(token, low=RATE_LOW, now=None):
+    """May background work spend this token's budget now? No while limited, or with under `low` REST calls left."""
+    now = time.time() if now is None else now
+    tid = _tid(token)
+    if _limited(tid, 'core', now) or _limited(tid, 'graphql', now):
+        return False
+    with LOCK:
+        row = dict(_limits.get((tid, 'core')) or {})
+    rem, reset = row.get('remaining'), row.get('reset') or 0
+    return not (rem is not None and rem < low and reset > now)
+
+
+def budget_of(token, now=None):
+    """{core: {remaining, reset_in}, ...} for this token (what the Tracker last heard; no request)."""
+    now = time.time() if now is None else now
+    tid, out = _tid(token), {}
+    with LOCK:
+        rows = {r: dict(v) for (t, r), v in _limits.items() if t == tid}
+    for r, v in rows.items():
+        out[r] = {'remaining': v.get('remaining'), 'reset_in': max(0, int((v.get('reset') or now) - now)),
+                  'limited_for': max(0, int((v.get('until') or 0) - now))}
+    return out
 
 
 GH_FLAKY = (500, 502, 503, 504)
@@ -455,6 +574,10 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
             hit = _cache.get(key)
         if hit and time.time() - hit[0] < CACHE_SECONDS:
             return hit[1]
+    tid, res = key[0], _resource(method, path)
+    wait = _limited(tid, res)
+    if wait:   # 0.39.1: limited: fail fast, no request, until GitHub's reset time
+        raise Problem(429, _back_in(wait), 'rate_limited')
     data = None if body is None else json.dumps(body).encode()
     headers = {'Authorization': 'Bearer ' + token, 'Accept': accept,
                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': USER_AGENT}
@@ -464,6 +587,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             payload = r.read(8 * 1024 * 1024)
+            _note_limit(tid, res, r.headers)
     except urllib.error.HTTPError as e:
         try:
             msg = str(json.loads(e.read(65536) or b'{}').get('message') or '')
@@ -474,8 +598,11 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
             if new:
                 return gh(new, method, path, body, cache, accept, _retry=False)
             raise Problem(401, TOKEN_DEAD, 'token_dead') from None
-        if e.code in (403, 429) and 'rate limit' in msg.lower():
-            raise Problem(429, 'GitHub rate limit reached. Try again in a minute.') from None
+        hdrs = e.headers if e.headers is not None else {}
+        if e.code in (403, 429) and ('rate limit' in msg.lower() or str(hdrs.get('X-RateLimit-Remaining')) == '0'
+                                     or hdrs.get('Retry-After')):
+            raise Problem(429, _back_in(_note_limit(tid, res, hdrs, limited=True, message=msg)), 'rate_limited') from None
+        _note_limit(tid, res, hdrs)
         if e.code in (403, 404):
             raise Problem(e.code, 'Your GitHub token cannot do that here' + (f' ({msg}).' if msg else '.')) from None
         if e.code == 422:
@@ -488,15 +615,22 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
     except (urllib.error.URLError, TimeoutError, OSError):
         raise Problem(502, 'Could not reach GitHub. Check the internet connection and try again.') from None
     out = json.loads(payload or b'null')
+    if method == 'GRAPHQL' and isinstance(out, dict) and any(isinstance(x, dict) and x.get('type') == 'RATE_LIMITED'
+                                                             for x in out.get('errors') or []):
+        raise Problem(429, _back_in(_note_limit(tid, res, {}, limited=True, message='rate limit')), 'rate_limited')
     if method == 'GRAPHQL' and isinstance(out, dict) and out.get('errors') and not out.get('data'):
         raise Problem(502, ('GitHub: ' + '; '.join(str(e.get('message', '')) for e in out['errors']))[:300])
     if method in ('GET', 'GRAPHQL'):
-        if cache:
+        if cache and len(payload) <= CACHE_ITEM_MAX:
             with LOCK:
-                _cache[key] = (time.time(), out)
-                if len(_cache) > 500:
-                    for k in sorted(_cache, key=lambda k: _cache[k][0])[:100]:
-                        _cache.pop(k, None)
+                _cache[key] = (time.time(), out, len(payload))
+                total = sum(e[2] for e in _cache.values() if len(e) > 2)
+                if total > CACHE_MAX_BYTES or len(_cache) > CACHE_MAX_ITEMS:
+                    for k in sorted(_cache, key=lambda k: _cache[k][0]):
+                        if total <= CACHE_MAX_BYTES * 3 // 4 and len(_cache) <= CACHE_MAX_ITEMS * 4 // 5:
+                            break
+                        e = _cache.pop(k)
+                        total -= e[2] if len(e) > 2 else 0
     else:
         _forget(token)
     return out
@@ -780,7 +914,9 @@ def status(person=None):
             'org': settings()['org'], 'token_url': TOKEN_URL, 'oauth': bool(github_client_id()),
             'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
             'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
-            'default_repo': DEFAULT_REPO, 'screenshots': bool(acct and acct.get('token') and _media_ready(acct['token']))}
+            'default_repo': DEFAULT_REPO, 'screenshots': bool(acct and acct.get('token') and _media_ready(acct['token'])),
+            # 0.39.1: what GitHub last said about this account's budgets (no request): {core: {remaining, reset_in, limited_for}}
+            'github': budget_of(acct['token']) if acct and acct.get('token') else None}
 
 
 def _media_ready(token):
@@ -1622,11 +1758,72 @@ def _timed_get(key, fn, seconds=TIMED_SECONDS):
         return hit[1]
     try:
         v = fn()
-    except Problem:
+    except Problem as e:
+        if e.code == 429:        # 0.39.1: limited: the last answer stands, nothing new is remembered
+            return hit[1] if hit else None
         v = None
     with LOCK:
         _timed[key] = (time.time(), v)
+        if len(_timed) > 3000:
+            for k in sorted(_timed, key=lambda k: _timed[k][0])[:500]:
+                _timed.pop(k, None)
     return v
+
+
+# 0.39.1 (James, 18 Nov): the immutable answers are kept on disk (DATA_DIR/private/forever.json, atomic, at most
+# FOREVER_MAX_BYTES, newest kept), loaded at start, so a restart (an update, a crash) never asks GitHub them all again.
+# A crash-looping box re-asked every compare and manifest each minute and drained its user's whole REST budget.
+FOREVER_FILE, FOREVER_MAX_BYTES, FOREVER_ITEM_MAX, FOREVER_SAVE_EVERY, FOREVER_MAX = 'forever.json', 2_000_000, 64 * 1024, 60, 4000
+_forever_state = {'dirty': False, 'saved': 0.0}
+_FOREVER_SAVING = threading.Lock()
+
+
+def _forever_load():
+    rows = _read(FOREVER_FILE, [])
+    n = 0
+    with LOCK:
+        for row in rows if isinstance(rows, list) else []:
+            if (isinstance(row, list) and len(row) == 2 and isinstance(row[0], list) and row[0]
+                    and all(isinstance(x, str) for x in row[0]) and row[1] is not None):
+                _forever[tuple(row[0])] = row[1]
+                n += 1
+        while len(_forever) > FOREVER_MAX:
+            _forever.pop(next(iter(_forever)))
+    return n
+
+
+def _forever_save(force=False):
+    """Write the kept answers when they changed (at most every FOREVER_SAVE_EVERY seconds unless `force`).
+    'Not there' answers (None) are not kept on disk: a restart may ask those again."""
+    if not _FOREVER_SAVING.acquire(blocking=force):
+        return False           # another thread is writing it right now
+    try:
+        with LOCK:
+            if not _forever_state['dirty'] or (not force and time.time() - _forever_state['saved'] < FOREVER_SAVE_EVERY):
+                return False
+            items = list(_forever.items())
+            _forever_state.update(dirty=False, saved=time.time())
+        rows, size = [], 0
+        for k, v in reversed(items):        # newest first, so the size cap drops the oldest
+            if v is None:
+                continue
+            n = len(json.dumps([list(k), v]))
+            if n > FOREVER_ITEM_MAX:
+                continue
+            if size + n > FOREVER_MAX_BYTES:
+                break
+            rows.append([list(k), v])
+            size += n
+        rows.reverse()
+        try:
+            _write(FOREVER_FILE, rows)
+        except OSError:
+            with LOCK:
+                _forever_state['dirty'] = True
+            return False
+        return True
+    finally:
+        _FOREVER_SAVING.release()
 
 
 def _forever_get(key, fn):
@@ -1641,9 +1838,11 @@ def _forever_get(key, fn):
         v = None                 # 404/403: the commit or file isn't there; that won't change
     with LOCK:
         _forever[key] = v
-        if len(_forever) > 4000:
+        if len(_forever) > FOREVER_MAX:
             for k in list(_forever)[:500]:
                 _forever.pop(k, None)
+        _forever_state['dirty'] = True
+    _forever_save()
     return v
 
 
@@ -1661,7 +1860,9 @@ def contains(token, repo, sha, build):
     if sha == build:
         return True
     def ask():
-        got = gh(token, 'GET', f'/repos/{repo}/compare/{sha}...{build}?per_page=1')
+        # 0.39.1: a page past the commits carries the status without the commits or the changed files (8 KB, not
+        # up to megabytes for a big range)
+        got = gh(token, 'GET', f'/repos/{repo}/compare/{sha}...{build}?per_page=1&page=100')
         st = (got or {}).get('status')
         return st in ('identical', 'ahead') if st else None
     return (_forever_get(('cmp', repo.lower(), sha, build), ask) if SHA40.match(build)
@@ -2080,20 +2281,58 @@ def on_box(person, args):
     return {'items': out, 'box': box}
 
 
-def _warm_releases():
+# 0.39.1: crash-loop protection. The start time is kept (DATA_DIR/private/starts.json); a start within
+# WARM_RESTART_WINDOW of the last one waits 2, 4, 8 … up to 30 minutes before its first warm-up, so a restart loop
+# can never turn into a GitHub burst. A normal start (an update, a reboot) warms up after 20 seconds as before.
+WARM_FIRST, WARM_RESTART_WINDOW, WARM_BACKOFF, WARM_BACKOFF_MAX, WARM_EVERY = 20, 600, 120, 1800, 120
+
+
+def _warm_delay(now=None):
+    """Record this start; seconds the warm-up waits before its first round."""
+    now = time.time() if now is None else now
+    row = _read('starts.json', {})
+    row = row if isinstance(row, dict) else {}
+    last, streak = _int(row.get('last')) or 0, _int(row.get('streak')) or 0
+    streak = min(streak + 1, 50) if last and 0 <= now - last < WARM_RESTART_WINDOW else 0
+    try:
+        _write('starts.json', {'last': int(now), 'streak': streak})
+    except OSError:
+        pass
+    return WARM_FIRST if not streak else min(WARM_BACKOFF_MAX, WARM_BACKOFF * 2 ** (streak - 1))
+
+
+def _warm_round():
+    """One warm-up round. Skipped (False) when nobody is signed in or the account's GitHub budget is low/limited."""
+    a = accounts()
+    key = a.get('default')
+    token = ((a.get('people') or {}).get(key) or {}).get('token') if key else None
+    if not token or not budget_ok(token):
+        return False
+    _WARMING.on = True
+    for v in ('bugs', 'apps', 'core'):
+        if not budget_ok(token):
+            return False
+        done_list(key, {'view': v})
+    return True
+
+
+def _warm_releases(sleep=time.sleep, rounds=None):
     """0.26.2 (Miguel, 11 Nov): keep the release lookups warm, so the Bugs stages (Merged / For testers / For everyone)
-    are right the moment the page opens instead of after a 15-second cold lookup."""
-    time.sleep(20)
-    while True:
+    are right the moment the page opens instead of after a 15-second cold lookup. 0.39.1: waits longer after a quick
+    restart, sits out while the GitHub budget is low, and saves the immutable answers after each round."""
+    sleep(_warm_delay())
+    n = 0
+    while rounds is None or n < rounds:
+        n += 1
         try:
-            key = accounts().get('default')
-            _WARMING.on = True
-            if key:
-                for v in ('bugs', 'apps', 'core'):
-                    done_list(key, {'view': v})
+            _warm_round()
         except Exception:   # noqa: BLE001 - a warm-up miss only means the next page load does the lookup itself
             pass
-        time.sleep(120)
+        try:
+            _forever_save(force=True)
+        except Exception:   # noqa: BLE001
+            pass
+        sleep(WARM_EVERY)
 
 
 def board_view(person, args):
@@ -5002,6 +5241,8 @@ wizard_switches_install(Handler)
 
 if __name__ == '__main__':
     secure_start()
+    _forever_load()    # 0.39.1: the immutable release answers from the last run
+    _limits_load()     # 0.39.1: a GitHub limit still running carries over a restart
     threading.Thread(target=refresh_loop, daemon=True).start()
     if os.environ.get('TRACKER_WARM', '1') != '0':
         threading.Thread(target=_warm_releases, daemon=True).start()
