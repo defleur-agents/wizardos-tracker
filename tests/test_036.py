@@ -28,7 +28,7 @@ const ctx = {
   console, Map, Set, JSON, Math, String, Error, Promise, Object, encodeURIComponent, Number, Date,
   setTimeout: (f) => 0,
   STORE_INSTALL: '/wizard-os-home/store-install/', UPD_STEPS: ['Starting', 'Installing', 'Restarting', 'Done'],
-  catalog: null, me: { version: '0.36.0' }, facts: { apps: {} }, wizFail: {}, wizBusy: new Map(), runs: new Map(),
+  boxUpd: null, catalog: null, me: { version: '0.36.0' }, facts: { apps: {} }, wizFail: {}, wizBusy: new Map(), runs: new Map(),
   onbox: new Set(), cache: {}, view: 'bugs', store: { set() {}, get() {} },
   busyOn: () => () => {}, pop: (b, t, x) => calls.push('pop ' + x), toast() {}, paintWizards() {}, render() {}, checkOnBox() {},
   jobDetail: () => '',
@@ -185,15 +185,17 @@ class Start(unittest.TestCase):
 
 class Page(unittest.TestCase):
     def test_settings_row_offers_start(self):
-        self.assertIn("(stop ? (a.update ? 'Start and update' : 'Start') : 'Update')", JS)
-        self.assertIn('Tap Start on', JS)
+        # 0.39.0: a stopped app sits in the Stopped group with Start (Start and update when the Store has newer)
+        self.assertIn("smallBtn(a.update ? 'Start and update' : 'Start', x => updateApp_(a.id, x))", JS)
+        self.assertIn("return { k: 'stopped'", JS)
         self.assertNotIn('ask your Wizard to start', JS)
 
     def test_settings_shows_the_run_under_its_row(self):
-        body = JS[JS.index('function paintWizards'):]
+        body = JS[JS.index('function updatesPicture'):]
         self.assertIn("const pnl = updPanel(run, null); pnl.classList.add('bd-wiz-run'); list.append(pnl);", body)
-        self.assertLess(body.index('Tap Start on'), body.index("const list = make('div', 'bd-list rows bd-wiz-apps')"))
-        self.assertIn("f.kind === 'start' ? `${f.name || id} didn’t start", body)
+        # 0.39.0: a failed update or start sits in Didn't update with its reason and Retry
+        self.assertIn("['failed', 'Didn’t update']", JS)
+        self.assertIn("smallBtn('Retry'", JS[JS.index('function appRow'):])
 
     def test_waits_longer_than_the_app_manager(self):
         self.assertIn('const UPDATE_WAIT_MS = 35 * 60000;', JS)
