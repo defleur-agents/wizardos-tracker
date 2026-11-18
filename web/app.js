@@ -2881,13 +2881,81 @@ async function updateApp_(id, btn, item) {
 async function updateAll(btn) {
   const list = ((catalog && catalog.apps) || []).filter(a => a.update && !wizBusy.has(a.id) && !busyStatus(a));
   if (!list.length) return pop(btn, '', 'Every app is up to date.');
-  askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => {
-    // 0.37.3 (Miguel, 17 Nov): three at a time. The App Manager runs one job per app, so different apps update side
-    // by side; three keeps downloads and restarts gentle on a small box.
-    const queue = list.slice();
-    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => { while (queue.length) await updateApp(queue.shift().id).catch(() => {}); }));
+  askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', () => {
+    queueStart(list.map(a => ({ key: a.id, name: a.id === 'wizardos-tracker' ? 'the Tracker' : a.name })));
   });
 }
+// ---------- 0.38.2 Update all survives the page going away (James, Archimedes: wizardos-tracker#97) ----------
+// Update all used to loop over a list held in page memory, so a phone that slept or a reload during the first app left
+// the rest never started. Now the list is a queue kept on this device (localStorage board.updq: todo, doing {key: since},
+// done, failed) and every load (and every return to the page) picks it up: an app whose update the App Manager is still
+// running is followed to its end (resumeRuns), one that never reached it is started again, one that ended while the page
+// was away counts as updated or failed (board.wizfail). Up to three apps at a time (0.37.3), then WizardOS, then the
+// Tracker last (it reloads the page). When the queue ends, any app that didn't update is listed on the banner with why.
+const QUEUE_KEY = 'board.updq', QUEUE_LAST = 'board.updq.last', QUEUE_MAX_MS = 3 * 3600000, QUEUE_WIDTH = 3;
+let queue = null, draining = null;
+const queueLate = k => k === 'wizardos-tracker' ? 2 : k === 'os' ? 1 : 0;   // WizardOS after the apps, the Tracker last
+function queueGet() {
+  const q = store.get(QUEUE_KEY);
+  if (!q || !Array.isArray(q.todo) || Date.now() - (q.at || 0) > QUEUE_MAX_MS) return null;
+  q.doing = q.doing || {}; q.done = q.done || []; q.failed = q.failed || [];
+  return q;
+}
+function queueSave() { if (queue) queue.at = Date.now(); store.set(QUEUE_KEY, queue); }
+function queueOpen() { const q = queueGet(); return !!q && (q.todo.length > 0 || Object.keys(q.doing).length > 0); }
+function queueStart(list) {
+  queue = queueGet() || { at: Date.now(), todo: [], doing: {}, done: [], failed: [] };
+  for (const x of list) if (!queue.todo.some(y => y.key === x.key) && !queue.doing[x.key]) queue.todo.push({ key: x.key, name: x.name });
+  queue.todo.sort((a, b) => queueLate(a.key) - queueLate(b.key));
+  queueSave(); store.set(QUEUE_LAST, null);
+  return drainQueue();
+}
+function queueTake() {
+  const busy = Object.keys(queue.doing).length;
+  const x = queue.todo[0];
+  if (!x || busy >= QUEUE_WIDTH || (queueLate(x.key) && busy)) return null;   // WizardOS / the Tracker wait for the rest
+  queue.todo.shift();
+  queue.doing[x.key] = { since: Date.now(), name: x.name };
+  queueSave();
+  return x;
+}
+function queueSettle(key) {
+  const d = queue.doing[key]; if (!d) return;
+  delete queue.doing[key];
+  const f = wizFail[key], r = runs.get(key);
+  const why = key === 'os' ? (r && r.state === 'failed' ? r.reason || 'The WizardOS update stopped.' : '') : f && f.at >= d.since - 1000 ? f.reason : '';
+  if (why) queue.failed.push({ key, name: d.name, reason: why }); else queue.done.push(key);
+  queueSave();
+}
+const queueRunning = key => { const r = runs.get(key); return !!r && r.state === 'running'; };
+async function queueWait(key) { while (queueRunning(key)) await sleep(1500); }
+async function queueRun(x) {
+  try { await (x.key === 'os' ? updateWizardOS(null, null) : updateApp(x.key)); } catch (_) {}
+  await queueWait(x.key);   // an update that was already running (Settings, another tap) is followed to its end
+}
+function drainQueue() { return draining || (draining = drain_().finally(() => { draining = null; })); }
+async function drain_() {
+  queue = queueGet(); if (!queue) return;
+  try { await loadCatalog(); } catch (_) {}
+  const waits = [];
+  // what was under way when the page went away
+  for (const key of Object.keys(queue.doing)) {
+    if (queueRunning(key)) waits.push(queueWait(key).then(() => { queueSettle(key); return worker(); }));
+    else if (pendingUpdates().some(p => p.key === key)) {   // never reached the App Manager (or it lost it): again
+      const d = queue.doing[key]; delete queue.doing[key];
+      queue.todo.unshift({ key, name: d.name }); queue.todo.sort((a, b) => queueLate(a.key) - queueLate(b.key));
+    } else queueSettle(key);   // ended while the page was away: updated, or failed with its reason
+  }
+  queueSave(); selfUpdate();
+  async function worker() { for (let x; (x = queueTake());) { selfUpdate(); await queueRun(x); queueSettle(x.key); selfUpdate(); } }
+  await Promise.all([...waits, ...Array.from({ length: QUEUE_WIDTH }, worker)]);
+  if (!queue.todo.length && !Object.keys(queue.doing).length) {
+    store.set(QUEUE_LAST, queue.failed.length ? { at: Date.now(), done: queue.done.length, failed: queue.failed } : null);
+    store.set(QUEUE_KEY, null); queue = null;
+  }
+  selfUpdate();
+}
+// ---------- end Update all queue ----------
 async function updateWizardOS(btn, item) { const done = busyOn(btn); try { return await updateWizardOS_(btn, item); } finally { done(); } }
 async function updateWizardOS_(btn, item) {
   try {
@@ -3097,7 +3165,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.38.1';
+const PAGE_VERSION = '0.38.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3127,9 +3195,8 @@ setTimeout(checkVersion, 5000);
 // The same path as Settings › Update (the box's own App Manager, owner-only same-origin route); one tap, no confirm:
 // the Tracker restarts for a moment and the page reloads itself. Agents send the owner here instead of running wam.
 // 0.33.7 (Miguel, 13 Nov): one 'Update all' at the top whenever anything on this Wizard has an update (apps, WizardOS,
-// the Tracker itself), so everything is current before a review starts. One tap, no confirm; it runs them one by one with
-// progress in place, the Tracker last (it reloads the page).
-let allBusy = false;
+// the Tracker itself), so everything is current before a review starts. One tap, no confirm; it runs them with progress in
+// place, the Tracker last (it reloads the page). 0.38.2: through the kept queue (queueStart), so it survives a reload.
 function pendingUpdates() {
   // the Tracker's own entry is judged by the version this page runs (runningSelf), never a stale catalog
   const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a)
@@ -3143,23 +3210,34 @@ function pendingUpdates() {
 function selfUpdate() {
   const box = el('selfupd'); if (!box) return;
   const running = [...runs.entries()].find(([, r]) => r && r.state !== 'done' && r.state !== 'failed');
+  // 0.38.2: the apps of an Update all that didn't update, with why (also after the page was away or reloaded)
+  const last = store.get(QUEUE_LAST), fails = [];
+  if (last && last.failed && last.failed.length && !draining) {
+    for (const f of last.failed) fails.push(make('p', 'bd-upd-why', `${cap(f.name)} didn’t update: ${f.reason}`));
+    fails.push(smallBtn('OK', () => { store.set(QUEUE_LAST, null); selfUpdate(); }));
+  }
   if (running) { box.hidden = false; box.className = 'bd-selfupd'; box.replaceChildren(updPanel(running[1], null)); return; }
   const list = pendingUpdates();
-  if (!list.length) { box.hidden = true; return box.replaceChildren(); }
+  if (!list.length && !fails.length) { box.hidden = true; return box.replaceChildren(); }
+  box.className = 'bd-selfupd'; box.hidden = false;
+  if (!list.length) return box.replaceChildren(...fails);
   const names = list.map(x => x.name);
   const t = make('span', 'bd-selfupd-t', list.length === 1 ? `An update is ready: ${names[0]}.` : `${list.length} updates ready: ${names.join(', ')}.`);
   const go = make('button', 'wz-button bd-selfupd-go', list.length === 1 ? 'Update' : 'Update all'); go.type = 'button'; go.id = 'selfupd-go';
-  go.onclick = async () => {
-    if (allBusy) return; allBusy = true; go.disabled = true;
-    try { for (const x of pendingUpdates()) { await (x.key === 'os' ? updateWizardOS(go, null) : updateApp(x.key, go)); selfUpdate(); } }
-    finally { allBusy = false; go.disabled = false; checkSelfUpdate(true); }
+  go.disabled = !!draining;
+  go.onclick = () => {
+    if (draining) return; go.disabled = true;
+    queueStart(pendingUpdates()).finally(() => checkSelfUpdate(true));
   };
-  box.className = 'bd-selfupd'; box.hidden = false; box.replaceChildren(t, go);
+  box.replaceChildren(t, go, ...fails);
 }
 async function checkSelfUpdate(force) {
   try { await Promise.all([loadCatalog(force), checkVersion()]); await resumeRuns(); } catch (_) {}
   selfUpdate();
+  if (queueOpen() && !draining) drainQueue().finally(() => checkSelfUpdate(true));   // 0.38.2: an Update all the page left
 }
+// 0.38.2: back from the background (a phone that slept): pick up an Update all at once
+document.addEventListener('visibilitychange', () => { if (!document.hidden && queueOpen() && !draining) checkSelfUpdate(true); });
 setTimeout(() => checkSelfUpdate(false), 1500);
 setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 // 0.36.4: while it offers an update, check again every 2 minutes, so an update that happened elsewhere (Settings, the
@@ -3170,7 +3248,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

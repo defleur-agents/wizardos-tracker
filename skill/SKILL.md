@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.38.1
+version: 0.38.2
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -73,7 +73,7 @@ The default list sort is **Your turn first**: what the viewer can act on now (th
 - An app that is **stopped** (it opens as a blank page, often after a big update such as Messenger) has **Start** in Tracker › Settings › Update (0.36.0): one tap starts it, and updates it too when it is behind. An update that ends stopped is started and retried by the Tracker itself. Send the owner to that button.
 - Never run `wam`, docker or any install command for this, and never send the owner to config files, env vars or client ids. A stock agent can't run wam anyway; the buttons are the way.
 
-The Update manager and Try changes live in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Cards show Update or the switch just in time, in their one action area.
+The Update manager and Try changes live in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Update all (0.38.2) keeps its list on the owner's device and carries on when the Tracker opens again, so leaving or reloading mid-way never strands the rest; apps that didn't update stay on the banner with why. Cards show Update or the switch just in time, in their one action area.
 
 ## Rules for agents
 - **Link the exact item** (0.33.8): whenever you mention a Tracker item to the owner, give the relative link `/wizardos-tracker/#item/<owner>/<repo>/<number>` (e.g. `/wizardos-tracker/#item/humanitylabs-org/wizard-ux/1191`); it opens that card in its own tab. Never say "find it in the Tracker".

@@ -122,8 +122,9 @@ class OneTapUpdate(unittest.TestCase):
         self.assertIn("a.id === 'wizardos-tracker'", f)
         self.assertIn('runningSelf(a)', f)
         self.assertIn("'Update all'", f)
-        self.assertIn("updateApp(x.key, go)", f)
-        self.assertIn("updateWizardOS(go, null)", f)
+        # 0.38.2: the banner hands the list to the kept queue (tests/test_0382.py), which runs apps, WizardOS, the Tracker
+        self.assertIn("queueStart(pendingUpdates())", f)
+        self.assertIn("x.key === 'os' ? updateWizardOS(null, null) : updateApp(x.key)", JS)
         self.assertNotIn('askPop', f)   # one tap
         self.assertIn('updPanel(running[1], null)', f)
         self.assertIn("STORE_INSTALL + encodeURIComponent(a.id)", fn('attemptUpdate'))   # 0.36.0
