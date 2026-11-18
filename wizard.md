@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.39.1
+version: 0.39.2
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.39.2** (James, Archimedes, 18 Nov) **The GitHub allowance the Tracker reads is the right one.** GitHub says which allowance each answer counted against; an answer from a smaller side allowance (code search, for example) no longer overwrites the main one, so the warm-up's "fewer than 1,000 left" check and `/api/status` `github.core` show the real number.
 
 **0.39.1** (James, Archimedes, 18 Nov) **The Tracker can no longer use up your GitHub allowance.** GitHub gives each person 5,000 requests an hour, shared by every box they're signed in on. A Tracker that ran out of memory restarted every minute and asked GitHub everything again each time, so the other box said "GitHub rate limit reached". Now: the Tracker gets 512 MB (was 128 MB) and keeps its 60-second read cache small (answers over 512 KB aren't kept, 8 MB at most); release checks ask GitHub only for the answer, not the whole list of changed files; the answers that never change (is this change in that build, release manifests, which commit a version is) are saved on the box (`DATA_DIR/private/forever.json`, 2 MB at most) so a restart doesn't ask them again; once GitHub says the allowance is spent (or a secondary limit, or Retry-After), the Tracker stops asking until GitHub's reset and says "GitHub limit reached; back in 12 minutes." (kept across a restart, `github_limits.json`); the background warm-up skips its round while fewer than 1,000 requests are left; and a Tracker that restarts within 10 minutes of its last start waits 2, 4, 8 … up to 30 minutes before warming up (`starts.json`), so a restart loop can't burst. `/api/status` shows what GitHub last said (`github.core.remaining`).
 
