@@ -624,11 +624,10 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-gstatus.big .bd-gtext { color: var(--ink); }
 .bd-stale { font-style: italic; opacity: .8; }
 .bd-light { flex: none; display: inline-block; width: 11px; height: 11px; border-radius: 50%; background: var(--fill-2); border: 1px solid var(--line-2); }
-.bd-light.green { background: var(--wz-success, var(--accent)); border-color: transparent; }
-.bd-light.yellow { background: var(--wz-warning, var(--ink-2)); border-color: transparent; }
-.bd-light.red { background: var(--danger, var(--wz-danger, var(--ink))); border-color: transparent; }
-.bd-light.yellow { border-radius: 2px; transform: rotate(45deg) scale(.85); }
-.bd-light.red { border-radius: 2px; }
+/* 0.38.0: In progress is neutral (no colour reward), Blocked red, Pending final review the accent */
+.bd-light.working { background: var(--ink-3, var(--ink-2)); border-color: transparent; }
+.bd-light.blocked { background: var(--danger, var(--wz-danger, var(--ink))); border-color: transparent; border-radius: 2px; }
+.bd-light.review { background: var(--accent); border-color: transparent; border-radius: 2px; transform: rotate(45deg) scale(.85); }
 .bd-glinked { margin: 0; font-size: var(--wz-text-sm); color: var(--ink-2); }
 .bd-lights { display: flex; flex-wrap: wrap; gap: 6px; }
 .bd-lightpick { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: none; color: var(--ink-2); font: inherit; font-size: var(--wz-text-sm); cursor: pointer; }

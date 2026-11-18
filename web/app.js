@@ -20,7 +20,7 @@
 // core_repos). Bugs and app features: Filed → Building → AI review → Human review (by the filer) → Shipping → Done.
 // Core features: Waiting for approval (0.18.2: James or Miguel) → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
 // Shipping = approved, not yet in a release for everyone; Done = 'Shipped in <version>'. Goals are human-led: a status
-// light (On track / At risk / Blocked) with a short human status, owners, linked items by stage. Cards: title, one
+// (0.38.0: In progress / Blocked / Pending final review) with a short human status, owners, linked items by stage. Cards: title, one
 // 'where it is and what's next' line, ONE action area (Update / Try / Works · Doesn't work / Approve), small meta.
 // The Update manager and Try changes live in Settings only.
 // WizardOS Tracker 0.17: a calmer list (stage strip with count and name only; Stats, Filter and Sort behind small
@@ -2067,7 +2067,11 @@ function updateFor(v, i) {
 
 // ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
 // linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
-const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
+// 0.38.0 (Miguel): no traffic lights that reward 'on track'. In progress is neutral; Pending final review means the owner
+// thinks it's done and James checks it (closes it or sends it back). Old colours read as working / blocked.
+const LIGHT = { working: 'In progress', blocked: 'Blocked', review: 'Pending final review' };
+const OLD_LIGHT = { green: 'working', yellow: 'working', red: 'blocked' };
+const stOf = s => { const v = s && (s.status || s.color); return OLD_LIGHT[v] || (LIGHT[v] ? v : 'working'); };
 const STAGE_WORD = { sorting: 'sorting', answer: 'needs an answer', test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
@@ -2086,12 +2090,13 @@ function statusBits(s, big) {
   const p = make('div', 'bd-gstatus' + (big ? ' big' : ''));
   if (!s) { const h = make('p', 'bd-ghead'); h.append(make('span', 'bd-light none'), make('span', 'bd-gword none', 'No status yet')); p.append(h); return p; }
   const head = make('p', 'bd-ghead');
-  head.append(make('span', 'bd-light ' + s.color), make('b', 'bd-gword', LIGHT[s.color] || s.word));
+  head.append(make('span', 'bd-light ' + stOf(s)), make('b', 'bd-gword', LIGHT[stOf(s)]));
   p.append(head);
   if (s.text) p.append(make('p', 'bd-gtext', s.text));
   const by = make('p', 'bd-hint', `Updated ${ago(s.at)} by ${firstName(s.by_person || s.by_name || s.by)}`);
   p.append(by);
-  if (s.stale) p.append(make('p', 'bd-hint bd-stale', 'Status is old'));
+  if (stOf(s) === 'review') p.append(make('p', 'bd-hint', 'The owner says it’s done: James checks it and closes it or sends it back.'));
+  else if (s.stale) p.append(make('p', 'bd-hint bd-stale', 'Status is old'));
   return p;
 }
 function linkedLine(g) {
@@ -2108,30 +2113,33 @@ function goalCard(g) {
   if ((g.assignees || []).length > 1) top.classList.add('multi');
   c.append(top);
   const s = g.status, line = make('p', 'bd-gline');
-  line.append(make('span', 'bd-light ' + (s ? s.color : 'none')));
-  const word = make('b', 'bd-gword' + (s ? '' : ' none'), s ? (LIGHT[s.color] || s.word) : 'No status yet');
+  line.append(make('span', 'bd-light ' + (s ? stOf(s) : 'none')));
+  const word = make('b', 'bd-gword' + (s ? '' : ' none'), s ? LIGHT[stOf(s)] : 'No status yet');
   line.append(word);
   if (s && s.text) { const t = make('span', 'bd-gone', ' · ' + s.text.replace(/\s+/g, ' ')); t.title = s.text; line.append(t); }
   c.append(line);
   const p = g.progress || {};
-  const meta = [p.total ? `Done list ${p.done}/${p.total}` : 'No done list', s ? `updated ${ago(s.at)}` : '', s && s.stale ? 'status is old' : ''].filter(Boolean);
+  const review = s && stOf(s) === 'review';
+  const meta = [p.total ? `Done list ${p.done}/${p.total}` : 'No done list', s ? `updated ${ago(s.at)}` : '', s && s.stale && !review ? 'status is old' : ''].filter(Boolean);
   const m = make('p', 'bd-hint bd-gmeta', meta.join(' · '));
   if (p.total) m.title = 'Ticked items on the goal’s done list (its checkboxes)';
   c.append(m);
-  if (g.turn && g.can_status) { const act = make('div', 'bd-act'); act.append(smallBtn('Update status', b => statusForm(g, act, b))); c.append(act); }
+  if (g.turn && review && g.can_close) { const act = make('div', 'bd-act'); act.append(smallBtn('Check it', () => openDetail(g))); c.append(act); }
+  else if (g.turn && g.can_status) { const act = make('div', 'bd-act'); act.append(smallBtn('Update status', b => statusForm(g, act, b))); c.append(act); }
   return c;
 }
-// Pick a colour, write one or two sentences, confirm. Saved as a comment 'Status: <colour>' then the text.
+// Pick In progress / Blocked / Pending final review, write one or two sentences, confirm. Saved as a comment
+// 'Status: working|blocked|review' then the text.
 function statusForm(g, area, btn) {
   if (area.nextSibling && area.nextSibling.classList && area.nextSibling.classList.contains('bd-fail')) return;
   const f = make('form', 'bd-fail bd-confirm bd-sform'); f.autocomplete = 'off';
   const pick = make('div', 'bd-lights'); pick.setAttribute('role', 'radiogroup'); pick.setAttribute('aria-label', 'Status');
-  let color = (g.status && g.status.color) || 'green';
-  const paint = () => pick.querySelectorAll('button').forEach(x => x.setAttribute('aria-checked', String(x.dataset.c === color)));
+  let st = g.status ? stOf(g.status) : 'working';
+  const paint = () => pick.querySelectorAll('button').forEach(x => x.setAttribute('aria-checked', String(x.dataset.c === st)));
   for (const [k, w] of Object.entries(LIGHT)) {
     const b = make('button', 'bd-lightpick'); b.type = 'button'; b.dataset.c = k; b.setAttribute('role', 'radio');
     b.append(make('span', 'bd-light ' + k), document.createTextNode(w));
-    b.onclick = () => { color = k; paint(); };
+    b.onclick = () => { st = k; paint(); };
     pick.append(b);
   }
   paint();
@@ -2153,7 +2161,7 @@ function statusForm(g, area, btn) {
     if (text.length < 3) { status.textContent = 'Write a sentence or two.'; return; }
     go.disabled = cancel.disabled = true;
     try {
-      const res = await api('api/goal/status', { repo: g.repo, number: g.number, color, text });
+      const res = await api('api/goal/status', { repo: g.repo, number: g.number, status: st, text });
       g.status = { ...res.status, by_person: (cache.goals && cache.goals.me_person) || res.status.by_person };
       details.delete(g.id); close(); goalsBadge();
       toast('Status posted.');
@@ -2364,7 +2372,7 @@ function detailGoal(i, d) {
     const ol = make('ol', 'bd-timeline');
     for (const s of hist) {
       const li = make('li', 'bd-tl');
-      const h = make('p', 'bd-ghead'); h.append(make('span', 'bd-light ' + s.color), make('b', 'bd-gword', LIGHT[s.color]), make('span', 'bd-hint', ` · ${firstName(s.by_person || s.by)} · ${ago(s.at)}`));
+      const h = make('p', 'bd-ghead'); h.append(make('span', 'bd-light ' + stOf(s)), make('b', 'bd-gword', LIGHT[stOf(s)]), make('span', 'bd-hint', ` · ${firstName(s.by_person || s.by)} · ${ago(s.at)}`));
       li.append(h);
       if (s.text) li.append(make('p', 'bd-gtext', s.text));
       ol.append(li);
@@ -3041,7 +3049,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.37.3';
+const PAGE_VERSION = '0.38.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3114,7 +3122,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.37.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -90,7 +90,7 @@ class GoalStatus(unittest.TestCase):
         rows = [('JanMesaric', 'Status: green\n\nAll good.', '2026-11-01T00:00:00Z'), ('x', 'just a comment', '2026-11-02T00:00:00Z'),
                 ('mistermizel', '**Status: Red**\nStuck on review.', '2026-11-03T00:00:00Z')]
         h = S.status_of(rows)
-        self.assertEqual([x['color'] for x in h], ['red', 'green'])
+        self.assertEqual([x['status'] for x in h], ['blocked', 'working'])   # 0.38.0: old colours map
         self.assertEqual((h[0]['word'], h[0]['text'], h[0]['by_person']), ('Blocked', 'Stuck on review.', 'Miguel'))
         now = S._ts('2026-11-05T00:00:00Z')
         self.assertFalse(S.latest_status(rows, now=now)['stale'])
@@ -102,7 +102,7 @@ class GoalStatus(unittest.TestCase):
             S.goal_status_set('m', {'repo': 'wizard-ux', 'number': 40, 'color': 'green', 'text': 'Fine'})
         self.assertEqual((e.exception.code, str(e.exception.message)), (403, 'Only the goal\u2019s owners or James update this.'))
         S.goal_status_set('n', {'repo': 'wizard-ux', 'number': 40, 'color': 'yellow', 'text': 'Slipping a day.'})
-        self.assertEqual(GH.issues[40]['comments'][-1], ('JanMesaric', 'Status: yellow\n\nSlipping a day.'))
+        self.assertEqual(GH.issues[40]['comments'][-1], ('JanMesaric', 'Status: working\n\nSlipping a day.'))   # 0.38.0
         S.goal_status_set('j', {'repo': 'wizard-ux', 'number': 40, 'color': 'green', 'text': 'Back on track.'})
         with self.assertRaises(S.Problem):
             S.goal_status_set('j', {'repo': 'wizard-ux', 'number': 40, 'color': 'blue', 'text': 'Back on track.'})
