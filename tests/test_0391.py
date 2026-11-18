@@ -99,12 +99,12 @@ class RateLimitGuard(Isolated):
         with self.assertRaises(S.Problem) as e:
             S.gh(TOK, 'GET', '/a')
         self.assertEqual(e.exception.message, 'GitHub limit reached; back in a minute.')
-        self.assertTrue(25 < S._limited(S._tid(TOK), 'core') <= 30)
+        self.assertTrue(25 < S._rate_wait(S._tid(TOK), 'core') <= 30)
         S._limits.clear()
         Mock.answer = (403, {}, {'message': 'You have exceeded a secondary rate limit. Please wait a few minutes.'})
         with self.assertRaises(S.Problem):
             S.gh(TOK, 'GET', '/b')
-        self.assertTrue(55 < S._limited(S._tid(TOK), 'core') <= S.RATE_SECONDARY)
+        self.assertTrue(55 < S._rate_wait(S._tid(TOK), 'core') <= S.RATE_SECONDARY)
         with self.assertRaises(S.Problem):
             S.gh(TOK, 'GET', '/c')
         self.assertEqual(Mock.hits, ['/a', '/b'])

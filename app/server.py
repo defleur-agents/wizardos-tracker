@@ -477,7 +477,7 @@ def _back_in(seconds):
     return 'GitHub limit reached; back in ' + ('a minute.' if m == 1 else f'{m} minutes.')
 
 
-def _limited(tid, res, now=None):
+def _rate_wait(tid, res, now=None):
     """Seconds until budget `res` of token `tid` is usable again (0: go ahead)."""
     now = time.time() if now is None else now
     with LOCK:
@@ -541,7 +541,7 @@ def budget_ok(token, low=RATE_LOW, now=None):
     """May background work spend this token's budget now? No while limited, or with under `low` REST calls left."""
     now = time.time() if now is None else now
     tid = _tid(token)
-    if _limited(tid, 'core', now) or _limited(tid, 'graphql', now):
+    if _rate_wait(tid, 'core', now) or _rate_wait(tid, 'graphql', now):
         return False
     with LOCK:
         row = dict(_limits.get((tid, 'core')) or {})
@@ -575,7 +575,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
         if hit and time.time() - hit[0] < CACHE_SECONDS:
             return hit[1]
     tid, res = key[0], _resource(method, path)
-    wait = _limited(tid, res)
+    wait = _rate_wait(tid, res)
     if wait:   # 0.39.1: limited: fail fast, no request, until GitHub's reset time
         raise Problem(429, _back_in(wait), 'rate_limited')
     data = None if body is None else json.dumps(body).encode()
@@ -587,7 +587,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             payload = r.read(8 * 1024 * 1024)
-            _note_limit(tid, res, r.headers)
+            _note_limit(tid, res, getattr(r, 'headers', None) or {})
     except urllib.error.HTTPError as e:
         try:
             msg = str(json.loads(e.read(65536) or b'{}').get('message') or '')
