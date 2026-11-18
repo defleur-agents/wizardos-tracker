@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.38.0
+version: 0.38.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.38.1** (James, 18 Nov) **Works, Needs changes and Still broken act at once** (wizardos-tracker#109). The card leaves its stage the moment you confirm, with its thank-you; the save runs in the background, and a list refresh meanwhile doesn't bring it back. Only if the save fails does the card come back where it was, with a message saying which check wasn't saved and why; a Needs changes / Still broken note is kept and filled in when you tap it again.
 
 **0.38.0** (Miguel, 18 Nov) **Goal statuses you want to close, not lights.** The green On track / yellow At risk / red Blocked lights are gone (everyone would just say on track). A goal is **In progress** (neutral, no colour), **Blocked** (red) or **Pending final review**: the owner thinks it's done, and James checks it and closes it or sends it back. A goal Pending final review is James's turn (Waiting on you first, and Needs you: "Goal says it is done: check and close it", with a Check it button that opens it), and its owners are no longer nagged that its status is old. The comment's first line is `Status: working|blocked|review`; old `green`/`yellow` comments read as In progress and `red` as Blocked. `goal_status_set` / `POST /api/goal/status` take `status` (working, blocked, review); the old `color` field still works with the same mapping.
 

@@ -355,7 +355,7 @@ async function load(which, refresh = false) {
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
-    cache[which] = d;
+    cache[which] = dropPending(d);   // 0.38.1: a check still being saved stays off its stage
     if (which === 'goals') goalsBadge();
     if (which === view && g === gen && !typing()) render(d);
     if (el('settings').open) tryList();
@@ -1712,7 +1712,7 @@ const WRONG = { label: 'What should change?', placeholder: 'e.g. Swiping feels c
 const BROKEN = { label: 'What still happens?', placeholder: 'e.g. The draft strip still shows 0 after a new draft', send: 'Send to the builder' };
 const NO_WORD = i => (i && (i.kind === 'bug' || i.category === 'bug') ? 'Still broken' : 'Needs changes');
 // 0.24.2: Doesn't work takes screenshots too (pick or paste, several, thumbnails); a failed send keeps the note open
-function doesntWork(area, i, b) { const w = NO_WORD(i) === 'Still broken' ? BROKEN : WRONG; noteAsk(area, w.placeholder, w.send, (note, shots) => tested(i, false, note, b, shots), { required: true, label: w.label, shots: true }); }
+function doesntWork(area, i, b) { const w = NO_WORD(i) === 'Still broken' ? BROKEN : WRONG; noteAsk(area, w.placeholder, w.send, (note, shots) => tested(i, false, note, b, shots), { required: true, label: w.label, shots: true, prefill: keptNotes.get(i.id) || '' }); }
 // Works (one tap, then the existing confirm) and Doesn't work: on the card, in the detail and in the app pop-up's bar
 function verdictBtns(i, area, wait) {
   const btns = make('span', 'bd-act-btns');
@@ -1971,6 +1971,7 @@ function noteAsk(area, placeholder, yesText, fn, opt = {}) {
   const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000; ta.placeholder = placeholder; ta.setAttribute('aria-label', opt.label || placeholder);
   if (opt.label) { const id = 'bd-note-' + Math.random().toString(36).slice(2, 8); ta.id = id; const l = make('label', 'bd-fail-l', opt.label); l.htmlFor = id; f.append(l); }
   if (opt.required) ta.required = true;
+  if (opt.prefill) { ta.value = opt.prefill; hold(true); }
   const r = make('div', 'bd-btns');
   const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
   const go = make('button', 'wz-button', yesText); go.type = 'submit';
@@ -2016,14 +2017,61 @@ function afterAct(i, msg) {
   if (cache[view]) render(cache[view]);
   toast(msg); setTimeout(() => load(view, true), 1500);
 }
-async function tested(i, works, note, b, screenshots) {
-  const done = works ? busyOn(b) : () => {};   // Doesn't work: its note's Send button spins (noteAsk)
-  try {
-    const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots });
-    afterAct(i, (works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : i.kind === 'bug' ? 'Thanks — tagged Checked by you.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.') + (r.warning ? ' ' + r.warning : ''));
-    return true;
-  } catch (err) { done(); pop(b, '', err.message); return false; }
-  finally { done(); }
+// 0.38.1 (James, wizardos-tracker#109): Works / Needs changes / Still broken are optimistic. The card leaves its
+// stage the same frame (takeOut), the request runs in the background, and only a failure puts the card back where it
+// was (putBack) with a clear message; a Needs changes note is kept for the retry. A list reload while the request runs
+// does not bring the card back (pendingChecks).
+const pendingChecks = new Set();
+const keptNotes = new Map();   // item id -> the note of a check that failed to send (prefills the next try)
+function takeOut(id) {
+  const was = [];
+  for (const v of Object.keys(cache)) {
+    const d = cache[v];
+    if (d && d.groups) for (const g of Object.keys(d.groups)) {
+      const at = (d.groups[g] || []).findIndex(x => x.id === id);
+      if (at >= 0) { was.push([v, g, at, d.groups[g][at], d]); d.groups[g] = d.groups[g].filter(x => x.id !== id); }
+    }
+  }
+  return was;
+}
+function putBack(was) {
+  for (const [v, g, at, item, d] of was) {
+    if (cache[v] !== d) continue;   // the list reloaded meanwhile: it already shows the item's real state
+    const l = d.groups[g] || (d.groups[g] = []);
+    if (!l.some(x => x.id === item.id)) l.splice(Math.min(at, l.length), 0, item);
+  }
+}
+function dropPending(d) {
+  if (d && d.groups && pendingChecks.size) for (const g of Object.keys(d.groups)) d.groups[g] = (d.groups[g] || []).filter(x => !pendingChecks.has(x.id));
+  return d;
+}
+function checkWord(i, works) { return works ? 'Works' : NO_WORD(i); }
+function tested(i, works, note, b, screenshots) {
+  if (pendingChecks.has(i.id)) return true;
+  hold(false); unpop();
+  pendingChecks.add(i.id);
+  const was = takeOut(i.id);
+  if (el('detail').open && openId === i.id) WzSheet.close(el('detail'));
+  if (el('appmodal').open) closeApp();   // 0.23.1: the check was made from the pop-up's bar
+  if (cache[view]) render(cache[view]);
+  const tweak = i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'));
+  toast(works ? (i.category === 'core' && !i.shipped && !tweak ? 'Thanks — on to James’ show-and-tell.' : i.kind === 'bug' ? 'Thanks — tagged Checked by you.' : 'Thanks — it’s shipping.') : 'Sent back to the builder.');
+  keptNotes.delete(i.id);
+  api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots })
+    .then(r => {
+      pendingChecks.delete(i.id);
+      details.delete(i.id); onbox.delete(i.id); delete doneCache[view];
+      if (r && r.warning) toast(r.warning);
+      setTimeout(() => load(view, true), 1500);
+    }, err => {
+      pendingChecks.delete(i.id);
+      if (note) keptNotes.set(i.id, note);
+      putBack(was);
+      if (cache[view]) render(cache[view]);
+      const msg = `${checkWord(i, works)} wasn’t saved, so “${i.title}” is back: ${err.message || 'the Tracker could not reach GitHub.'}` + (note ? ' Your note is kept.' : '');
+      toast(msg); say(msg, 'error');
+    });
+  return true;
 }
 async function james(i, decision, note, b) {
   const done = decision === 'approve' ? busyOn(b) : () => {};
@@ -3049,7 +3097,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.38.0';
+const PAGE_VERSION = '0.38.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3122,7 +3170,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
