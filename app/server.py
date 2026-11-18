@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.38.2'
+VERSION = '0.38.3'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2536,7 +2536,9 @@ def board_split(person, args):
         elif group == 'james':   # 0.18.2: James or Miguel approve core features; show-and-tell stays James's
             extra = {'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
         elif group == 'show':
-            extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['show'], 'turn': james}
+            # 0.38.3 (Miguel, 18 Nov): anyone on the team may press 'James approved' during the show-and-tell (internal
+            # tool, they click it on James's behalf with his OK); it stays James's turn for 'Your turn first' and Needs you.
+            extra = {'can_james': True, 'james_rule': '', 'turn': james}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
             if cat == 'bug':
@@ -2626,7 +2628,7 @@ def needs_you_split(splits):
     - answer (builder question): asked of the viewer's person;
     - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
       Miguel's badge never counts James's approvals of other people's ideas;
-    - show   (show-and-tell): James only;
+    - show   (show-and-tell): James only (anyone may press 'James approved', but it is his turn);
     - goals: the viewer owns it and its status is missing or stale; 0.38.0: a goal Pending final review counts for
       James (who closes goals: 'Goal says it is done: check and close it') and not for its owners.
     0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
@@ -3323,7 +3325,7 @@ def policy(person=None):
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell",
+             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell (anyone may mark it James approved)",
              "Bugs (Miguel, 10 Nov): merged switched on and shipping before review; AI check, then the filer's check after the fact. "
              "Doesn't work reopens it to Building. Done once in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work."]
     login = None
@@ -4133,7 +4135,7 @@ def feedback_review(person, args):
     return out
 
 
-JAMES_RULE = {'approve': 'Only James or Miguel can approve core features.', 'show': 'Only James approves show-and-tell.'}
+JAMES_RULE = {'approve': 'Only James or Miguel can approve core features.'}
 
 
 def james_decide(person, args):
@@ -4171,15 +4173,14 @@ def james_decide(person, args):
 
 
 def show_and_tell(person, args):
-    """POST /api/show {repo, number}: James approves a core feature after its show-and-tell. Without a switch it is
-    closed (approved: Shipping until released). With one it stays open with label switch-default: the builder removes
-    the switch / turns it on by default, merges, and closes it."""
+    """POST /api/show {repo, number}: James approved a core feature at its show-and-tell. 0.38.3 (Miguel, 18 Nov): any
+    team member may press it on James's behalf (the comment names who pressed it). Without a switch it is closed
+    (approved: Shipping until released). With one it stays open with label switch-default: the builder removes the
+    switch / turns it on by default, merges, and closes it."""
     _, acct = account_for(person)
     full, number = _target(args)
     login = acct.get('login') or ''
     base = policy_base()
-    if not is_james(login, base):
-        raise Problem(403, JAMES_RULE['show'], 'not_james')
     cur = _current(acct, full, number)
     names = _labels(cur)
     if SHOW_LABEL not in names:
@@ -4188,7 +4189,8 @@ def show_and_tell(person, args):
     said = [b for w, b in _comment_rows(rows) if w.lower() in BUILDERS]
     sw, how = switch_info(said, cur.get('body'))
     switched = bool(sw or how)
-    body = f'Show-and-tell: approved \u2014 @{login}' + ('\n\nBuilder: remove the switch (on for everyone by default), merge, then close this issue.' if switched else '')
+    by = '' if is_james(login, base) else f' (marked by @{login})'
+    body = (f'Show-and-tell: approved \u2014 @{login}' if not by else f'Show-and-tell: James approved{by}') + ('\n\nBuilder: remove the switch (on for everyone by default), merge, then close this issue.' if switched else '')
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
     _add_label(acct, full, number, APPROVED_LABEL)
     if switched:
@@ -4640,7 +4642,7 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': AGENT_UPDATE + 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
-                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell. "
+                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell (any team member may press 'James approved' for him). "
                                  "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set (working, blocked, or review when they think it is done); only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':

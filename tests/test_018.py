@@ -63,10 +63,8 @@ class James(unittest.TestCase):
         r = S.tested('m', {'repo': 'wizard-ux', 'number': 31}, True)
         self.assertEqual(r['stage'], 'show')
         self.assertEqual(GH.issues[31]['labels'], {'feature', 'james-approved', 'show-and-tell'})
-        with self.assertRaises(S.Problem) as e:
-            S.show_and_tell('m', {'repo': 'wizard-ux', 'number': 31})
-        self.assertEqual(str(e.exception.message), 'Only James approves show-and-tell.')
         r = S.show_and_tell('j', {'repo': 'wizard-ux', 'number': 31})
+        self.assertTrue(GH.issues[31]['comments'][-1][1].startswith('Show-and-tell: approved'))
         self.assertIn('approved', GH.issues[31]['labels'])
         self.assertNotIn('show-and-tell', GH.issues[31]['labels'])
         self.assertFalse(r['switch_default'])
