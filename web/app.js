@@ -48,8 +48,8 @@ const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items, open_ship }; filled from the device below (0.26.2)
 // 0.18.1: the last view is remembered per device; first landing is Core features (Goals only if you last used Goals).
-const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
-let me = null, view = ({ '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
+const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) || v === 'me' ? v : 'me'; } catch (_) { return 'me'; } };
+let me = null, view = ({ '#me': 'me', '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -219,7 +219,7 @@ function show(s) {
   const on = !!s.connected;
   el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
-  for (const x of [el('report-open'), el('goals-btn'), document.querySelector('.bd-switch')]) x.hidden = !on;
+  for (const x of [el('report-open'), el('goals-btn'), el('me-btn'), document.querySelector('.bd-switch')]) x.hidden = !on;
   if (!on) el('builder').hidden = true;   // 0.33: shown by showBuilder only while the builder is paused   // 0.22: the header row's board controls
   if (!on && s.notice) say(s.notice, 'error');
   signinMode(s);
@@ -305,6 +305,8 @@ const sw = document.querySelector('.bd-switch');
 function markView() {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
   el('goals-btn').setAttribute('aria-pressed', String(view === 'goals'));
+  el('me-btn').setAttribute('aria-pressed', String(view === 'me'));
+  el('board').classList.toggle('bd-meview', view === 'me');
 }
 // 0.19.1: the number is every open goal (all goals count the same, whoever looks)
 const GOALS_TIP = 'Open goals';
@@ -326,12 +328,13 @@ function pickView(v) {
   try { history.replaceState(null, '', '#' + view); } catch (_) {}
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
-  if (cache[view]) render(cache[view]);
+  if (cache[view] || view === 'me') render(cache[view] || cache.me);
   else { el('secs').replaceChildren(); el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
 }
 sw.addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) pickView(b.dataset.view); });
 el('goals-btn').onclick = () => pickView('goals');
+el('me-btn').onclick = () => pickView('me');
 
 // 0.13.5: a small refresh button top right; it spins while a reload is in flight, and 'updated 20s ago' says how fresh the list is.
 let inflight = 0, freshAt = 0;
@@ -351,11 +354,13 @@ function freshness() {
 setInterval(freshness, 5000);
 
 async function load(which, refresh = false) {
+  if (which === 'me') return loadMe(refresh);   // 0.39.0: Waiting on me reads every tab
   const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
     cache[which] = dropPending(d);   // 0.38.1: a check still being saved stays off its stage
+    meBadge();
     if (which === 'goals') goalsBadge();
     if (which === view && g === gen && !typing()) render(d);
     if (el('settings').open) tryList();
@@ -390,6 +395,7 @@ function reposOf(d, keepWho) {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
+  if (view === 'me') return renderMe();
   if (d.view !== view) return;
   for (const g of Object.values(d.groups || {})) for (const i of g || []) adoptSwitch(i);
   for (const i of (d.items || [])) adoptSwitch(i);
@@ -2583,12 +2589,17 @@ function drawStageFlow(f, v) {
 // {source, repo, commit, operation: 'update'} (the Store's own exact-release update). No other team box is known to the
 // Tracker yet (no list of team Wizards exists), so it shows this Wizard only.
 const STORE_DATA = '/wizard-os-home/store-data/', STORE_INSTALL = '/wizard-os-home/store-install/';
+let boxUpd = null, idxKeep = null;
 let updates = null, catalog = null, catalogAt = 0, wizBusy = new Map(), wizFail = store.get('board.wizfail') || {};
 const getJSON = (u, init) => fetch(u, { credentials: 'same-origin', cache: 'no-store', ...(init || {}) }).then(async r => { const b = await r.json().catch(() => null); if (!r.ok) { const e = new Error((b && b.error) || `HTTP ${r.status}`); e.status = r.status; throw e; } return b; });
 async function loadCatalog(force) {
   if (catalog && !force && Date.now() - catalogAt < 120000) return catalog;
-  const [inst, idx, up] = await Promise.allSettled([getJSON(STORE_DATA + 'wizard/v1/installed-apps'), getJSON(STORE_DATA + 'wizard/v1/index/search?limit=100' + (force ? '&refresh=1' : '')), getJSON(UPDATES_API)]);
+  const idxFresh = idxKeep && Date.now() - idxKeep.at < 60000;
+  const [inst, idx, up, au] = await Promise.allSettled([getJSON(STORE_DATA + 'wizard/v1/installed-apps'),
+    idxFresh ? Promise.resolve(idxKeep.v) : getJSON(STORE_DATA + 'wizard/v1/index/search?limit=100' + (force ? '&refresh=1' : '')), getJSON(UPDATES_API), getJSON(STORE_INSTALL + '_app-updates')]);
   if (up.status === 'fulfilled') updates = up.value;
+  boxUpd = au.status === 'fulfilled' && au.value ? au.value : null;
+  if (idx.status === 'fulfilled' && !idxFresh) idxKeep = { at: Date.now(), v: idx.value };
   if (inst.status !== 'fulfilled') { catalog = { error: inst.reason && inst.reason.status === 404 ? 'This Wizard’s App Manager can’t list its apps yet: update WizardOS.' : 'Open the Tracker inside your Wizard to see its apps.', apps: [] }; return catalog; }
   const rel = new Map();   // repo (lower) -> newest Store release for that exact repository
   for (const a of (idx.status === 'fulfilled' && idx.value.apps) || []) for (const r of [a, ...(a.releases || [])]) {
@@ -2758,7 +2769,14 @@ async function startJob(a, r, step) {
 async function attemptUpdate(a, r, self, again) {
   const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
   const url = STORE_INSTALL + encodeURIComponent(a.id);
-  const j = await getJSON(url, STORE_POST(sel));
+  let j;
+  // 0.39.0: another update of this app is running (the automatic run, Settings, another device): wait for it to end
+  // instead of failing, then post only if the app still needs it
+  if (boxRunning(a.id) || busyStatus(fresh(a.id))) { const done = await waitFree(a, r); if (done != null) return done; }
+  for (let tries = 0; ; tries++) {
+    try { j = await getJSON(url, STORE_POST(sel)); break; }
+    catch (e) { if (e.status !== 409 || tries >= 2) throw e; const done = await waitFree(a, r, e.message); if (done != null) return done; }
+  }
   keepRun(a, r);   // 0.36.3: the App Manager took it; a reload of this page picks it back up (resumeRuns)
   return followJob(a, r, self, again, url, j);
 }
@@ -2780,6 +2798,23 @@ async function followJob(a, r, self, again, url, j) {
   const want = { commit: (j.selection && j.selection.commit) || (a.release && a.release.commit) || null, version: a.latest };
   try { return self ? await backUp('healthz', a.latest, me && me.version, a.name, 150) : await onBox(a.id, a.name, want, a.version, 150); }
   catch (e) { throw tag(e, !e.final); }
+}
+// 0.39.0: the App Manager's own update run (nightly / Settings › Update now) and its per-app operations, from the
+// owner route store-install/_app-updates (running, queued, due, failed, last). Null when this Wizard lacks it.
+const boxRunning = id => !!(boxUpd && (boxUpd.running || []).some(x => x && x.app === id && x.by !== 'store'));
+async function waitFree(a, r, why) {
+  r.steps = ['Waiting', ...UPD_STEPS];
+  runStep(r, 'Waiting', why ? 'Another update of it is running' : 'Another update of it is running; this one goes next');
+  for (const end = Date.now() + UPDATE_WAIT_MS; Date.now() < end; await sleep(5000)) {
+    catalog = null; await loadCatalog(true).catch(() => {});
+    const b = fresh(a.id);
+    if (!b) continue;
+    if (boxRunning(a.id) || busyStatus(b)) continue;
+    if (!b.update) { runStep(r, 'Restarting', 'The other update brought it up to date'); return await onBox(a.id, a.name, {}, a.version, 150, true); }
+    runStep(r, 'Starting', '');
+    return null;
+  }
+  const e = new Error(`${a.name} was still busy with another update after ${Math.round(UPDATE_WAIT_MS / 60000)} minutes.`); e.final = true; throw e;
 }
 // 0.37.2 (Miguel, 17 Nov): what the App Manager lists is the truth about an app's version. Most apps' healthz carries
 // no version (Search, Music, DeFleur, Wisdom…) or isn't there (Claude, ChatGPT), so waiting on it called finished
@@ -2818,7 +2853,12 @@ const STEPS_UPDATE = UPD_STEPS, STEPS_START = ['Starting app', 'Restarting', 'Do
 const STEPS_START_UPDATE = ['Starting app', 'Installing', 'Restarting', 'Done'];
 const STEPS_RECOVER = ['Starting', 'Installing', 'Starting app', 'Trying again', 'Restarting', 'Done'];
 // 0.27: the Update button spins from the tap until the in-place progress panel takes over (or the answer comes back)
-async function updateApp(id, btn, item) { const done = busyOn(btn); try { return await updateApp_(id, btn, item); } finally { done(); } }
+async function updateApp(id, btn, item) {
+  // 0.39.0: a tapped Update joins the one queue (up to three at a time, kept across reloads) instead of racing the
+  // others; the queue itself calls updateApp without a button. Starting a stopped app still runs at once.
+  if (btn) { const a = fresh(id); if (a && a.update && !isStopped(a) && !(runs.get(id) && runs.get(id).state === 'running')) { queueStart([{ key: id, name: id === 'wizardos-tracker' ? 'the Tracker' : a.name }]); toast(draining && queue && queue.todo.length ? `${a.name} is queued` : `Updating ${a.name}`); repaintRuns(); return; } }
+  const done = busyOn(btn); try { return await updateApp_(id, btn, item); } finally { done(); }
+}
 // 0.36.0: one tap does what it takes. Stopped -> start it first (an update brings back only a running app). Update
 // ended stopped or on the old version -> start it and update once more (its images are cached, so the second try is
 // quick). Still not there -> one plain line and Retry.
@@ -2933,7 +2973,8 @@ async function queueRun(x) {
   try { await (x.key === 'os' ? updateWizardOS(null, null) : updateApp(x.key)); } catch (_) {}
   await queueWait(x.key);   // an update that was already running (Settings, another tap) is followed to its end
 }
-function drainQueue() { return draining || (draining = drain_().finally(() => { draining = null; })); }
+// 0.39.0: an app queued while a drain is finishing is never left behind: the next drain picks it up
+function drainQueue() { return draining ? draining.then(() => (queueOpen() ? drainQueue() : null)) : (draining = drain_().finally(() => { draining = null; })); }
 async function drain_() {
   queue = queueGet(); if (!queue) return;
   try { await loadCatalog(); } catch (_) {}
@@ -3090,7 +3131,65 @@ async function showWizards(force) {
   await resumeRuns();   // 0.36.3: an update still running on the box shows as running, never as Update
   paintWizards();
 }
+// 0.39.0 (Miguel, 18 Nov: 'doesn't give me a picture of what the status of the updates are'): one state per app, from
+// every source at once: this page's runs, the kept Update all queue, the App Manager's own update run (nightly,
+// Settings, another device: _app-updates running / failed / last) and each app's own status. Grouped Updating now ·
+// Queued · Didn't update · Ready · Stopped · Up to date, with one summary line on top.
+const UPD_GROUPS = [['updating', 'Updating now'], ['queued', 'Queued'], ['failed', 'Didn’t update'], ['ready', 'Update ready'], ['stopped', 'Stopped'], ['current', 'Up to date']];
+function appState(a) {
+  const r = runs.get(a.id), q = queueGet();
+  if (r && r.state === 'running') return { k: 'updating', run: r };
+  const box = boxUpd && (boxUpd.running || []).find(x => x && x.app === a.id);
+  if (box) return { k: 'updating', why: `${cap(box.step || 'updating')}${box.by === 'store' ? '' : ' · automatic updates'}${box.started ? ' · started ' + when(new Date(box.started * 1000).toISOString()) : ''}` };
+  if (busyStatus(a)) return { k: 'updating', why: cap(String(a.status).replace(/_/g, ' ')) };
+  if (q && q.doing[a.id]) return { k: 'updating', why: 'Starting' };
+  const pos = q ? q.todo.findIndex(x => x.key === a.id) : -1;
+  if (pos >= 0) return { k: 'queued', why: pos === 0 ? 'Next' : `${pos + 1} in line` };
+  if (boxUpd && (boxUpd.queued || []).some(x => x && x.app === a.id)) return { k: 'queued', why: 'Queued in the App Manager' };
+  const f = wizFail[a.id], bf = boxUpd && boxUpd.failed && boxUpd.failed[a.id];
+  if (a.update && (f || bf)) return { k: 'failed', why: (f && f.reason) || (bf && bf.reason) || 'No reason given', run: r && r.state === 'failed' ? r : null };
+  if (r && r.state === 'failed') return { k: 'failed', why: r.reason, run: r };
+  if (isStopped(a) && !a.pinned) return { k: 'stopped', why: a.update ? `Stopped, so it doesn’t open · ${a.latest} ready` : 'Stopped, so it doesn’t open' };
+  if (a.update) return { k: 'ready', why: `${a.version || '?'} → ${a.latest}` };
+  return { k: 'current', why: a.held ? `WizardOS keeps it at this version (the Store has ${a.latest})` : a.pinned ? 'updates with WizardOS' : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest' : a.source === 'owner-private' ? 'private build' : 'not in the Store', done: r && r.state === 'done' ? r : null };
+}
+function updSummary(apps) {
+  const n = {}; for (const a of apps) { const k = appState(a).k; n[k] = (n[k] || 0) + 1; }
+  return UPD_GROUPS.filter(([k]) => n[k]).map(([k, w]) => `${n[k]} ${k === 'current' ? 'up to date' : k === 'failed' ? 'didn’t update' : k === 'ready' ? 'ready' : w.toLowerCase()}`).join(' · ');
+}
+function appRow(a, st) {
+  const r = make('div', 'bd-rowx bd-wiz-app bd-st-' + st.k + (a.id === umFocus ? ' focus' : ''));
+  r.dataset.app = a.id;
+  const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
+  t.append(make('span', 'bd-meta', [a.version || '?', st.why].filter(Boolean).join(' · ')));
+  r.append(t);
+  if (st.k === 'ready') r.append(smallBtn('Update', x => updateApp(a.id, x)));
+  else if (st.k === 'failed') r.append(smallBtn('Retry', x => { delete wizFail[a.id]; store.set('board.wizfail', wizFail); updateApp(a.id, x); }));
+  else if (st.k === 'stopped') r.append(smallBtn(a.update ? 'Start and update' : 'Start', x => updateApp_(a.id, x)));
+  else if (st.k === 'queued') { const q = queueGet(); if (q && q.todo.some(x => x.key === a.id)) r.append(smallBtn('Remove', () => { queue = queueGet(); if (queue) { queue.todo = queue.todo.filter(x => x.key !== a.id); queueSave(); } paintWizards(); renderMeSoon(); })); }
+  return r;
+}
+function updatesPicture(apps, opts) {
+  const out = [];
+  const by = new Map(UPD_GROUPS.map(([k]) => [k, []]));
+  for (const a of apps) { const st = appState(a); by.get(st.k).push([a, st]); }
+  for (const [k, title] of UPD_GROUPS) {
+    const l = by.get(k); if (!l.length) continue;
+    if (opts && opts.skipCurrent && k === 'current') continue;
+    const sec = k === 'current' ? make('details', 'bd-upd-sec') : make('section', 'bd-upd-sec');
+    const h = make(k === 'current' ? 'summary' : 'h3', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(l.length)));
+    const list = make('div', 'bd-list rows bd-wiz-apps');
+    for (const [a, st] of l) {
+      list.append(appRow(a, st));
+      const run = st.run || (st.k === 'current' && st.done);
+      if (run) { const pnl = updPanel(run, null); pnl.classList.add('bd-wiz-run'); list.append(pnl); }
+    }
+    sec.append(h, list); out.push(sec);
+  }
+  return out;
+}
 function paintWizards() {
+  if (view === 'me') renderMeSoon();
   if (!el('settings').open || !catalog) return;
   const w = el('um-body'), u = updates || {};
   const host = /^[0-9.]+$|^localhost$/.test(location.hostname) ? 'This Wizard' : location.hostname.split('.')[0];
@@ -3099,47 +3198,114 @@ function paintWizards() {
   card.append(head);
   const os = make('p', 'bd-onbox ' + (u.update_available ? 'no' : 'yes'));
   const ch = u.channel === 'latest' ? 'For testers' : u.channel === 'stable' ? 'Stable' : '—';
-  os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ` : ' · latest ✓')));
+  os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.installing ? ' · updating now' : u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ` : ' · latest ✓')));
   const osRun = runs.get('os');
-  if (u.update_available && !osRun) os.append(smallBtn(u.installing ? 'Updating…' : 'Update', b => updateWizardOS(b)));
+  if (u.update_available && !osRun && !u.installing) os.append(smallBtn('Update', b => updateWizardOS(b)));
   card.append(os);
   if (osRun) card.append(updPanel(osRun, null));
   if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
   const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a);
-  const n = apps.filter(a => a.update).length;
+  const n = pendingUpdates().filter(x => x.key !== 'os').length;
   const bar = make('div', 'bd-wiz-bar');
-  bar.append(make('span', 'bd-meta', catalog.error || `${apps.length} apps · ${n ? n + ' to update' : 'all up to date'}`));
-  const all = smallBtn('Update all', b => updateAll(b)); if (!n) all.setAttribute('aria-disabled', 'true'); bar.append(all);
+  bar.append(make('span', 'bd-meta', catalog.error || updSummary(apps)));
+  const all = smallBtn(n ? `Update all (${n})` : 'Update all', b => updateAll(b)); if (!n) all.setAttribute('aria-disabled', 'true'); bar.append(all);
   card.append(bar);
-  const fails = Object.entries(wizFail).sort((a, b) => b[1].at - a[1].at);
-  if (fails.length) { const [id, f] = fails[0]; if (!runs.get(id)) card.append(make('p', 'bd-why', f.kind === 'start' ? `${f.name || id} didn’t start (${when(new Date(f.at).toISOString())}): ${f.reason}` : `Last failed update: ${f.name || id} → ${f.to || '?'} (${when(new Date(f.at).toISOString())}): ${f.reason}`)); }
-  // 0.35.1: a stopped app opens as a blank page; 0.36.0: its row has Start
-  const stopped = apps.filter(a => isStopped(a) && !a.pinned && !runs.get(a.id)).map(a => a.name);
-  if (stopped.length) card.append(make('p', 'bd-why', `${stopped.join(', ')} ${stopped.length === 1 ? 'is' : 'are'} stopped, so ${stopped.length === 1 ? 'it doesn’t' : 'they don’t'} open. Tap Start on ${stopped.length === 1 ? 'it' : 'each'} below.`));
-  const list = make('div', 'bd-list rows bd-wiz-apps');
-  for (const a of apps) {
-    const r = make('div', 'bd-rowx bd-wiz-app' + (a.id === umFocus ? ' focus' : ''));
-    r.dataset.app = a.id;
-    const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
-    const busy = wizBusy.get(a.id) || (busyStatus(a) ? cap(String(a.status).replace(/_/g, ' ')) + '…' : '');
-    const where = a.held ? `WizardOS keeps it at this version (the Store has ${a.latest}; it comes with a WizardOS release)` : a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
-    t.append(make('span', 'bd-meta', [a.version || '?', where, a.status && a.status !== 'running' ? a.status : ''].filter(Boolean).join(' · ')));
-    r.append(t);
-    // 0.36.0: a stopped app gets a one-tap Start (Start and update when the Store has a newer one)
-    const stop = isStopped(a) && !a.pinned;
-    const b = smallBtn(busy || (stop ? (a.update ? 'Start and update' : 'Start') : 'Update'), x => a.update || stop ? updateApp(a.id, x) : pop(x, '', b.title));
-    if ((!a.update && !stop) || busy) { b.setAttribute('aria-disabled', 'true'); b.title = busy || (a.pinned ? 'Updates with WizardOS (above).' : a.ahead ? 'This Wizard runs a newer build than the Store lists.' : a.latest ? 'Already the latest.' : 'Nothing in the Store to update to.'); }
-    r.append(b);
-    list.append(r);
-    // 0.36.0: the app's Start / Update shows its steps, time and Retry right under its row
-    const run = runs.get(a.id);
-    if (run) { const pnl = updPanel(run, null); pnl.classList.add('bd-wiz-run'); list.append(pnl); }
+  const last = boxUpd && boxUpd.last;
+  if (last && last.at) {
+    const nm = id => (apps.find(a => a.id === id) || {}).name || id;
+    const bits = [last.updated && last.updated.length ? 'updated ' + last.updated.map(nm).join(', ') : '', last.failed && last.failed.length ? 'failed ' + last.failed.map(nm).join(', ') : '', last.rolled_back && last.rolled_back.length ? 'rolled back ' + last.rolled_back.map(nm).join(', ') : ''].filter(Boolean);
+    card.append(make('p', 'bd-meta', `Automatic updates (${boxUpd.app_mode === 'ask' ? 'Ask me' : 'Automatic'}) last ran ${when(last.at)}: ${bits.join('; ') || 'nothing to update'}.`));
   }
-  card.append(list);
-  card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
+  card.append(...updatesPicture(apps));
   w.replaceChildren(card);
   const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
   if (f) f.scrollIntoView({ block: 'center' });
+}
+// While anything updates, the picture refreshes itself every 5 seconds (Settings open or Waiting on me shown)
+setInterval(() => {
+  if (document.hidden || !(el('settings').open || view === 'me')) return;
+  const busy = draining || [...runs.values()].some(r => r.state === 'running') || (boxUpd && (boxUpd.running || []).length) || ((catalog && catalog.apps) || []).some(busyStatus);
+  if (!busy) return;
+  catalog = null; loadCatalog(true).then(() => { paintWizards(); selfUpdate(); }).catch(() => {});
+}, 5000);
+
+// ---------- 0.39.0 Waiting on me (Miguel, 18 Nov): one place for everything that waits on the signed-in person ----------
+// Every tab's 'your turn' cards (features to try, builder questions, approvals, show-and-tell, goals needing a status),
+// Feedback reports to approve, and this Wizard's updates (ready, running, queued, failed). The cards are the same cards
+// as on their own tabs, so everything is done right here. Read from the tabs' own loads; no new server route.
+cache.me = { view: 'me', groups: {} };
+let meTimer = 0;
+function renderMeSoon() { clearTimeout(meTimer); meTimer = setTimeout(() => { if (view === 'me' && !typing() && !document.querySelector('.bd-confirm')) renderMe(); }, 50); }
+function meItems() {
+  const seen = new Set(), out = [];
+  for (const v of ['goals', ...VIEWS.filter(x => x !== 'goals')]) for (const l of Object.values((cache[v] || {}).groups || {})) for (const i of l || [])
+    if (i && !seen.has(i.id) && myTurn(i)) { seen.add(i.id); out.push(i); }
+  return out;
+}
+const ME_KINDS = [['test', 'To try'], ['answer', 'Questions for you'], ['approve', 'To approve'], ['goals', 'Goals needing a status']];
+const meKind = i => i.group === 'test' ? 'test' : i.group === 'answer' ? 'answer' : i.group === 'james' || i.group === 'show' ? 'approve' : 'goals';
+function meFeedback() { const S = window.FeedbackStage && FeedbackStage._state; return S ? S.items.filter(i => !S.gone.has(i.number)) : []; }
+function meCount() {
+  const apps = (catalog && catalog.apps) || [];
+  return meItems().length + meFeedback().length + apps.filter(a => { const k = appState(a).k; return k === 'ready' || k === 'failed'; }).length + (updates && updates.update_available && !updates.installing ? 1 : 0);
+}
+function meBadge() { const n = el('me-n'); if (!n) return; const k = meCount(); n.hidden = !k; n.textContent = k ? String(k) : ''; el('me-btn').title = k ? `Waiting on me: ${k}` : 'Waiting on me'; }
+let meFetched = 0;
+async function loadMe(refresh) {
+  // the 30-second tick asks for a refresh; four tabs from GitHub that often is too much, so at most every 2 minutes
+  if (refresh && Date.now() - meFetched < 120000) refresh = false;
+  if (refresh) meFetched = Date.now();
+  lastLoad = Date.now(); inflight++; freshness();
+  try {
+    await Promise.all([...VIEWS.map(v => api(`api/split?view=${v}${refresh ? '&refresh=1' : ''}`).then(d => { cache[v] = dropPending(d); if (v === 'goals') goalsBadge(); }).catch(() => {})),
+      window.FeedbackStage ? FeedbackStage.load(true) : null, loadCatalog(!!refresh).catch(() => {})]);
+    freshAt = Date.now(); say('');
+  } finally { inflight = Math.max(0, inflight - 1); freshness(); }
+  if (view === 'me') renderMe(); else meBadge();
+}
+function renderMe() {
+  meBadge();
+  if (view !== 'me') return;
+  for (const id of ['totals', 'filtered']) el(id).textContent = '';
+  el('strip').replaceChildren();
+  const secs = [];
+  const loading = VIEWS.some(v => !cache[v]);
+  // updates on this Wizard first: they are what lets everything else be tried
+  const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a);
+  const pend = pendingUpdates(), osRun = runs.get('os');
+  const upd = updatesPicture(apps, { skipCurrent: true });
+  if (upd.length || pend.some(x => x.key === 'os') || osRun) {
+    const s = make('section', 'bd-sec bd-me-upd');
+    const h = make('h2', 'bd-sec-h', 'Updates on this Wizard ');
+    const tools = make('span', 'bd-me-tools');
+    if (pend.length) tools.append(smallBtn(`Update all (${pend.length})`, b => { b.setAttribute('aria-disabled', 'true'); queueStart(pendingUpdates()).finally(() => checkSelfUpdate(true)); renderMeSoon(); }));
+    tools.append(smallBtn('All apps', () => openUM()));
+    h.append(tools);
+    s.append(h, make('p', 'bd-meta', updSummary(apps)));
+    if (updates && updates.update_available && !osRun) { const p = make('p', 'bd-onbox no'); p.append(make('b', '', 'WizardOS ' + (updates.installed || '?')), document.createTextNode(updates.installing ? ' · updating now' : ` → ${updates.latest_for_channel || updates.latest} `)); if (!updates.installing) p.append(smallBtn('Update', b => updateWizardOS(b))); s.append(p); }
+    if (osRun) s.append(updPanel(osRun, null));
+    s.append(...upd); secs.push(s);
+  }
+  const items = meItems();
+  for (const [k, title] of ME_KINDS) {
+    const l = items.filter(i => meKind(i) === k); if (!l.length) continue;
+    const s = make('section', 'bd-sec'); s.id = 'sec-me-' + k;
+    const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(l.length)));
+    const list = make('div', 'bd-list'); list.replaceChildren(...l.map(itemCard));
+    s.append(h, list); secs.push(s);
+  }
+  const fb = meFeedback();
+  if (fb.length) {
+    const s = make('section', 'bd-sec'); s.id = 'sec-me-feedback';
+    const h = make('h2', 'bd-sec-h', 'Feedback to approve '); h.append(make('span', 'bd-n', String(fb.length)));
+    const list = make('div', 'bd-list'); list.replaceChildren(...fb.map(FeedbackStage.card));
+    s.append(h, list); secs.push(s);
+  }
+  el('secs').replaceChildren(...secs);
+  const askOn = items.filter(i => i.group === 'test');
+  if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
+  el('empty').hidden = !!secs.length;
+  el('empty').textContent = loading ? 'Loading…' : 'Nothing is waiting on you. Nice.';
 }
 
 // ---------- 0.17 Settings › Try changes: every switch in Human review, on/off, the same toggles as on the cards ----------
@@ -3165,7 +3331,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.38.3';
+const PAGE_VERSION = '0.39.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3200,7 +3366,7 @@ setTimeout(checkVersion, 5000);
 function pendingUpdates() {
   // the Tracker's own entry is judged by the version this page runs (runningSelf), never a stale catalog
   const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a)
-    .filter(a => a && a.update && !wizBusy.has(a.id) && !busyStatus(a));
+    .filter(a => a && a.update && !wizBusy.has(a.id) && !busyStatus(a) && !boxRunning(a.id));
   const self = apps.find(a => a.id === 'wizardos-tracker');
   const list = apps.filter(a => a.id !== 'wizardos-tracker').map(a => ({ key: a.id, name: a.name }));
   if (updates && updates.update_available && !updates.installing) list.push({ key: 'os', name: 'WizardOS' });
@@ -3248,7 +3414,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.39.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

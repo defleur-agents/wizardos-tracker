@@ -1046,3 +1046,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   .bd-dbin { padding-inline: 1px; }
   .bd-dbin-w { font-size: .58rem; letter-spacing: -.01em; }
 }
+
+/* 0.39.0 Waiting on me + the updates picture */
+.bd-me-n:not([hidden]) { background: var(--accent); color: var(--on-accent); }
+.bd-meview .bd-tools, .bd-meview .bd-strip { display: none; }
+.bd-me-tools { display: inline-flex; gap: 8px; margin-left: auto; }
+.bd-me-upd > .bd-sec-h { display: flex; align-items: center; gap: 8px; }
+.bd-upd-sec { margin-top: 12px; }
+.bd-upd-sec > summary { cursor: pointer; list-style: none; }
+.bd-upd-sec > summary::-webkit-details-marker { display: none; }
+.bd-st-updating .bd-meta, .bd-st-queued .bd-meta { color: var(--accent); }
+.bd-st-failed .bd-meta, .bd-st-stopped .bd-meta { color: var(--wz-danger, var(--ink-2)); }
+@media (max-width: 520px) { .bd-me-btn .bd-goals-t { display: none; } }

@@ -23,7 +23,7 @@ class AppUpdate(unittest.TestCase):
         self.assertIn('ended up stopped', JS)   # 0.36.0: and the Tracker then starts it (test_036)
 
     def test_settings_list_names_stopped_apps(self):
-        self.assertIn("apps.filter(a => isStopped(a) && !a.pinned && !runs.get(a.id))", JS)
+        self.assertIn("if (isStopped(a) && !a.pinned) return { k: 'stopped'", JS)   # 0.39.0: its own group
 
     def test_header_says_refreshing(self):
         self.assertIn("f.textContent = 'refreshing…'", JS)

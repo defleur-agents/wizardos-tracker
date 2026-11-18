@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.38.3
+version: 0.39.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.39.0** (Miguel, 18 Nov) **Waiting on me, and an updates picture that tells the truth.** A new **Waiting on me** button (left of the tabs, with a count; the default view) lists everything that waits on you in one place: this Wizard's updates (ready, running, queued, failed, stopped, with Update all), features to try, builder questions, approvals and show-and-tell, goals needing a status, and Feedback reports to approve, all with their usual buttons. Settings › Apps groups every app by state (Updating now · Queued · Didn't update · Update ready · Stopped · Up to date) under one summary line, shows the App Manager's own automatic run (what it is updating now and its last run), and refreshes itself every 5 seconds while anything updates. Concurrent updates: every Update tap joins the one kept queue (three at a time) instead of racing; an update of an app the App Manager is already updating waits for it to end (and a 409 'already running' waits and retries) instead of failing; an app queued while the queue is finishing is picked up.
 
 **0.38.3** (Miguel, 18 Nov) **Anyone can press James approved at the show-and-tell.** The show-and-tell button is no longer James-only: everyone on the team sees an enabled **James approved** button and presses it on James's behalf once he has OKed it in the session (internal tool, trusted team). The GitHub comment reads 'Show-and-tell: James approved (marked by @login)' when someone else pressed it ('Show-and-tell: approved — @login' when James did). It still counts as James's turn (Your turn first, Needs you), not the presser's.
 
