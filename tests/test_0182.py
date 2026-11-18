@@ -46,11 +46,12 @@ class Approvers(unittest.TestCase):
             S.james_decide('n', {'repo': 'wizard-ux', 'number': 52, 'decision': 'approve'})
         self.assertEqual((e.exception.code, str(e.exception.message)), (403, 'Only James or Miguel can approve core features.'))
 
-    def test_show_and_tell_stays_james(self):
+    def test_show_and_tell_anyone_marks_james_approved(self):   # 0.38.3: anyone presses 'James approved' for him
         GH.issues[53] = {'user': 'JanMesaric', 'labels': {'feature', 'james-approved', 'show-and-tell'}, 'comments': []}
-        with self.assertRaises(S.Problem) as e:
-            S.show_and_tell('m', {'repo': 'wizard-ux', 'number': 53})
-        self.assertEqual(str(e.exception.message), 'Only James approves show-and-tell.')
+        S.show_and_tell('n', {'repo': 'wizard-ux', 'number': 53})
+        self.assertIn('approved', GH.issues[53]['labels'])
+        self.assertNotIn('show-and-tell', GH.issues[53]['labels'])
+        self.assertTrue(GH.issues[53]['comments'][-1][1].startswith('Show-and-tell: James approved (marked by @'))
 
 
 class BoardFlags(unittest.TestCase):
@@ -78,8 +79,8 @@ class BoardFlags(unittest.TestCase):
         f = self.flags('m')
         self.assertEqual(f[1][:2], ('james', True))
         self.assertTrue(f[1][3])
-        self.assertEqual(f[2][:2], ('show', False))
-        self.assertEqual(f[2][4], 'Only James approves show-and-tell.')
+        self.assertEqual(f[2][:2], ('show', True))    # 0.38.3: anyone may press 'James approved'
+        self.assertFalse(f[2][3])                     # ...but it is James's turn, not Miguel's
         self.assertEqual(f[3][0], 'test')
         self.assertTrue(f[3][2])                      # Miguel filed #3: his Human review turn
 

@@ -1807,10 +1807,10 @@ function actionArea(i, inDetail) {
     const no = smallBtn('Decline', b => noteAsk(row, 'Why not? (optional)', 'Decline', note => james(i, 'decline', note, b)));
     row.append(yes, no); return row;
   }
-  if (g === 'show') {
-    if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
+  if (g === 'show') {   // 0.38.3 (Miguel, 18 Nov): anyone on the team may press 'James approved' for him at the show-and-tell
+    if (!i.can_james) { row.append(greyBtn('James approved', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
     if (i.switch) { const grp = make('div', 'bd-trygrp'); grp.append(trySwitch(i)); row.append(grp); }
-    const yes = smallBtn('Approve', b => askPop(b, 'Approve after the show-and-tell? The switch goes away (on for everyone) and it ships.', 'Approve', () => showOk(i, b)));
+    const yes = smallBtn('James approved', b => askPop(b, 'James approved it at the show-and-tell? The switch goes away (on for everyone) and it ships.', 'James approved', () => showOk(i, b)));
     yes.classList.add('bd-mini-go');
     row.append(yes); return row;
   }
@@ -2081,7 +2081,7 @@ async function james(i, decision, note, b) {
 }
 async function showOk(i, b) {
   const done = busyOn(b);
-  try { const r = await api('api/show', { repo: i.repo, number: i.number }); done(); afterAct(i, r.switch_default ? 'Approved: the builder turns it on for everyone.' : 'Approved: it’s shipping.'); }
+  try { const r = await api('api/show', { repo: i.repo, number: i.number }); done(); afterAct(i, r.switch_default ? 'James approved: the builder turns it on for everyone.' : 'James approved: it’s shipping.'); }
   catch (err) { done(); pop(b, '', err.message); }
   finally { done(); }
 }
@@ -2251,7 +2251,7 @@ function roles(i) {
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
   if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · built and merged by the builder · For testers, then For everyone with the releases · anyone may check it (optional) · Doesn’t work reopens it`; return; }
-  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
+  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell (anyone may press James approved)' : '') + ' · then Shipping until it’s in a release for everyone';
 }
 // 0.26.1 (Miguel, 11 Nov): Check it opens a short check card, not the GitHub thread: what changed and how to check
 // it in plain words (the builder's hand-back), Before / After, then Open <app> · Works · Doesn't work. The issue text,
@@ -3165,7 +3165,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.38.2';
+const PAGE_VERSION = '0.38.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3248,7 +3248,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.38.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
