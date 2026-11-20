@@ -205,10 +205,13 @@ const tapTarget = (cls, fn) => { const a = make('a', cls); a.setAttribute('role'
 const plainClick = e => !(e.metaKey || e.ctrlKey || e.shiftKey || e.button);
 
 // ---------- sign in ----------
-const REFUSED_TITLE = { not_member: 'For the WizardOS team', agent: 'Your own account, please' };
+const REFUSED_TITLE = { not_member: 'For the WizardOS team', agent: 'Your own account, please', agent_saved: 'Agent account saved' };
 function refuse(reason, message) {
   el('refused-title').textContent = REFUSED_TITLE[reason] || REFUSED_TITLE.not_member;
   el('refused-text').textContent = message;
+  // 0.40.0: an agent's own account was saved for its tools; the person carries on with their own
+  el('refused-back').textContent = reason !== 'agent_saved' ? 'Use another account' : (me && me.connected ? 'Back to the Tracker' : 'Sign in with my own account');
+  if (reason === 'agent_saved' && me) { me.agent_own = true; account(me); }
   el('signin').hidden = true; el('board').hidden = true; el('loading').hidden = true; el('refused').hidden = false;
   say('');
 }
@@ -231,7 +234,17 @@ function account(s) {
   el('acct-name').textContent = on ? 'Signed in as ' + (a.name || a.login || 'you') : '';
   el('acct-name').hidden = !on;
   el('acct-act').textContent = on ? 'Sign out' : 'Sign in';
+  // 0.40.0: which GitHub account the agent's tools act as, when it is the agent's own
+  const own = !!(on && s.agent_own);
+  el('agent-acct').hidden = !own;
+  if (own) el('agent-acct-name').textContent = `Your agent's tools use ${s.agent_account || 'its own account'}.`;
 }
+el('agent-acct-act').onclick = async () => {
+  const b = el('agent-acct-act'); b.disabled = true;
+  try { show(await api('api/agent-account/disconnect', {})); say(''); }
+  catch (err) { pop(b, '', err.message); }
+  finally { b.disabled = false; }
+};
 el('acct-act').onclick = async () => {
   unpop();
   if (!(me && me.connected)) {
@@ -243,7 +256,7 @@ el('acct-act').onclick = async () => {
   catch (err) { pop(b, '', err.message); }
   finally { b.disabled = false; }
 };
-el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').hidden = false; signinMode(me); (me && me.oauth && !tokenWanted ? el('oauth-go') : el('token')).focus(); };
+el('refused-back').onclick = () => { if (me && me.connected) { show(me); return; } el('refused').hidden = true; el('signin').hidden = false; signinMode(me); (me && me.oauth && !tokenWanted ? el('oauth-go') : el('token')).focus(); };
 el('connect-form').onsubmit = async e => {
   e.preventDefault();
   const t = el('token'), b = el('connect');
@@ -3331,7 +3344,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.39.2';
+const PAGE_VERSION = '0.40.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3414,7 +3427,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.39.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.40.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

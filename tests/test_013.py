@@ -312,8 +312,46 @@ class Device(unittest.TestCase):
         GH.token_answers[:] = [{'access_token': 'gho_agent_aaaaaaaaaaaaaaaaaaaaaaa'}]
         _, flow = self.start()
         S.device_run(flow, sleep=lambda s: None)
-        self.assertEqual((flow['state'], flow['reason']), ('refused', 'agent'))
+        # 0.40.0: an agent's own account is saved for the agent's tools, never as the person
+        self.assertEqual((flow['state'], flow['reason']), ('refused', 'agent_saved'))
+        self.assertIn('Archimedes', flow['message'])
         self.assertNotIn('p@x', S.accounts()['people'])
+        self.assertEqual(S.accounts()['people'][S.AGENT_KEY]['login'], 'defleur-agents')
+
+    def test_agent_own_account_drives_the_tools_only(self):
+        """0.40.0 (James): signed in with Archimedes, the agent's tools act as Archimedes, people stay themselves."""
+        reset()
+        with self.assertRaises(S.Problem) as e:
+            S.connect('p@x', {'token': 'gho_agent_aaaaaaaaaaaaaaaaaaaaaaa'})
+        self.assertEqual(e.exception.reason, 'agent_saved')
+        a = S.accounts()
+        self.assertEqual(a['default'], 'owner')                       # the human default is untouched
+        self.assertEqual(S.account_for(None, agent=True)[1]['login'], 'defleur-agents')
+        self.assertEqual(S.account_for('owner')[1]['login'], 'mistermizel')
+        st = S.status('owner')
+        self.assertEqual((st['agent_account'], st['agent_own']), ('defleur-agents', True))
+        self.assertEqual(S._try_who(None, True), 'owner')             # Try it choices stay the owner's
+        self.assertEqual(S.person_key('~agent'), 'owner')             # nobody can act as the agent slot
+        st = S.status('~agent')
+        self.assertNotEqual((st.get('account') or {}).get('login'), 'defleur-agents')
+        # Use mine instead: the tools go back to the first person
+        S.agent_disconnect('owner')
+        self.assertNotIn(S.AGENT_KEY, S.accounts()['people'])
+        self.assertEqual(S.account_for(None, agent=True)[1]['login'], 'mistermizel')
+        # a person signing out never hands the box default to the agent slot
+        with self.assertRaises(S.Problem):
+            S.connect('p@x', {'token': 'gho_agent_aaaaaaaaaaaaaaaaaaaaaaa'})
+        S.disconnect('owner')
+        self.assertIsNone(S.accounts()['default'])
+        self.assertEqual(S.account_for(None, agent=True)[1]['login'], 'defleur-agents')
+
+    def test_builder_account_still_refused(self):
+        reset()
+        GH.users['ghu_bldr_aaaaaaaaaaaaaaaaaaaaaaaa'] = S.BUILDER
+        with self.assertRaises(S.Problem) as e:
+            S.connect('p@x', {'token': 'ghu_bldr_aaaaaaaaaaaaaaaaaaaaaaaa'})
+        self.assertEqual(e.exception.reason, 'agent')
+        self.assertNotIn(S.AGENT_KEY, S.accounts()['people'])
 
     def test_cancel_and_no_client_id(self):
         _, flow = self.start()

@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.39.2
+version: 0.40.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.40.0** (James, 19 Nov) **An agent can sign in with its own GitHub account.** Signing in with an agent's account (Archimedes, Oscar) no longer just refuses it: it becomes the account that agent's Tracker tools use, so they stop acting as the owner's personal (admin) account. It never opens the Tracker for a person; the screen says so and the owner signs in with their own account. Settings shows "Your agent's tools use …" with Use mine instead. Builder accounts are still refused.
 
 **0.39.2** (James, Archimedes, 18 Nov) **The GitHub allowance the Tracker reads is the right one.** GitHub says which allowance each answer counted against; an answer from a smaller side allowance (code search, for example) no longer overwrites the main one, so the warm-up's "fewer than 1,000 left" check and `/api/status` `github.core` show the real number.
 
