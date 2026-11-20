@@ -1058,3 +1058,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-st-updating .bd-meta, .bd-st-queued .bd-meta { color: var(--accent); }
 .bd-st-failed .bd-meta, .bd-st-stopped .bd-meta { color: var(--wz-danger, var(--ink-2)); }
 @media (max-width: 520px) { .bd-me-btn .bd-goals-t { display: none; } }
+
+/* 0.42.0: reply box and Approve PR on the item detail */
+.bd-d-reply { margin-top: var(--wz-space-3); }
+.bd-d-reply-go { display: flex; justify-content: flex-end; }
+.bd-d-reply-go .wz-button { min-height: 44px; min-width: 7rem; font-weight: 700; }
+.bd-comment.bd-pending { opacity: .7; }
+.bd-comment.bd-unsent { border-color: color-mix(in srgb, var(--wz-danger, var(--ink)) 45%, var(--line)); }
+.bd-comment .bd-unsent-l { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.bd-d-approve { display: grid; gap: var(--wz-space-2); margin: var(--wz-space-2) 0; }
+.bd-d-approve .bd-apr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bd-d-approve .bd-apr-t { flex: 1 1 100%; font-size: .85rem; color: var(--ink-2, var(--ink)); overflow-wrap: anywhere; }
+.bd-d-approve .bd-apr-ok { font-weight: 700; color: var(--wz-success, var(--ink)); }

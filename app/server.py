@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.41.1'
+VERSION = '0.42.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1462,6 +1462,106 @@ def add_comment(person, args, agent=False):
     if (got.get('body') or '').strip() != body:
         raise Problem(502, 'GitHub did not save the comment.')
     return {'repo': full, 'number': number, 'comment_url': got.get('html_url'), 'saved': True}
+
+
+# 0.42.0 (Miguel, 20 Nov 2026): answer the builder and approve its blocked PR without leaving the Tracker. An item in
+# Needs an answer (builder:blocked) lists the open pull requests linked to it (GitHub's links plus PR URLs in its body
+# and comments); 'Approve PR #N' submits an APPROVE review as the signed-in person, then comments so the builder goes on.
+PR_URL = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)')
+APPROVE_BODY = 'Approved in WizardOS Tracker'
+ANSWER_PRS_MAX = 6
+
+
+def answer_prs(acct, full, number, cur=None):
+    """Open PRs an answer-stage item's builder question may be waiting on, newest-mentioned first. [] when the item is
+    not open and labelled builder:blocked. Each: repo, number, title, url, author, draft, mine (you opened it: GitHub
+    won't let you approve it), asked (the builder's latest question names it)."""
+    cur = cur if cur is not None else _current(acct, full, number)
+    if (cur.get('state') or '') != 'open' or not any(l.startswith(BLOCKED_LABEL) for l in _labels(cur)):
+        return []
+    node = _read_issue(acct, full, number, False)
+    org = settings()['org'].lower()
+    texts = [node.get('body') or ''] + [c.get('body') or '' for c in node.get('comment_list') or []]
+    bots = {x.lower() for x in policy_base()['builder']['logins']} | BUILDERS
+    said = [c.get('body') or '' for c in node.get('comment_list') or [] if (c.get('author') or '').lower() in bots]
+    asked = {(r.lower(), int(n)) for r, n in PR_URL.findall(said[-1])} if said else set()
+    if said:   # 'PR #N' in the builder's last comment means this repo's PR #N unless a URL names another repo
+        asked |= {(full.lower(), int(n)) for n in re.findall(r'(?i)\bPR\s*#(\d+)', said[-1]) if not any(k[1] == int(n) for k in asked)}
+    seen, order = {}, []
+    for t in reversed(texts):
+        for r, n in reversed(PR_URL.findall(t)):
+            k = (r.lower(), int(n))
+            if k not in seen:
+                seen[k] = None
+                order.append(k)
+    for p in node.get('prs') or []:
+        k = ((p.get('repo') or full).lower(), int(p['number']))
+        if k not in seen:
+            seen[k] = p.get('state')
+            order.append(k)
+    order = sorted(order, key=lambda k: k not in asked)   # stable: asked first, then newest mention
+    me, out = (acct.get('login') or '').lower(), []
+    for r, n in order:
+        if len(out) >= ANSWER_PRS_MAX:
+            break
+        if r.split('/')[0] != org or seen.get((r, n)) in ('closed', 'merged'):
+            continue
+        try:
+            pr = gh(acct['token'], 'GET', f'/repos/{r}/pulls/{n}')
+        except Problem as e:
+            if e.code in (403, 404):
+                continue
+            raise
+        if not isinstance(pr, dict) or pr.get('state') != 'open' or pr.get('merged_at'):
+            continue
+        author = ((pr.get('user') or {}).get('login') or '')
+        repo_name = ((pr.get('base') or {}).get('repo') or {}).get('full_name') or r
+        out.append({'repo': repo_name, 'number': n, 'title': pr.get('title') or '', 'url': pr.get('html_url') or f'https://github.com/{r}/pull/{n}',
+                    'author': author, 'draft': bool(pr.get('draft')), 'mine': author.lower() == me, 'asked': (r, n) in asked})
+    return out
+
+
+def approve_pr(person, args, agent=False):
+    """Approve an answer-stage item's linked open PR as the signed-in person (agents: their account, a human's words
+    as owner_request), then comment on the item so builder:blocked clears."""
+    _owner_request(args, agent, 'approve pull requests')
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    pr = args.get('pr')
+    if isinstance(pr, str):   # a number, '#N' or the PR's URL
+        url, num = PR_URL.fullmatch(pr.strip()), re.fullmatch(r'#?(\d+)', pr.strip())
+        if url:
+            args, pr = {'pr_repo': url.group(1), **{k: v for k, v in args.items() if v}}, int(url.group(2))
+        elif num:
+            pr = int(num.group(1))
+    if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
+        raise Problem(400, 'Name the pull request: pr (its number or URL).')
+    want = _repo(settings()['org'], args.get('pr_repo')) if args.get('pr_repo') else None
+    cur = _current(acct, full, number)
+    if (cur.get('state') or '') != 'open' or not any(l.startswith(BLOCKED_LABEL) for l in _labels(cur)):
+        raise Problem(409, 'This item is not waiting on an answer, so there is no PR to approve here.', 'not_answer')
+    hits = [p for p in answer_prs(acct, full, number, cur) if p['number'] == pr and (not want or p['repo'].lower() == want.lower())]
+    if not hits:
+        raise Problem(409, f'PR #{pr} is not an open pull request linked to this item.', 'not_linked')
+    if len(hits) > 1:
+        raise Problem(400, f'More than one linked PR is #{pr}; name its repo as pr_repo.')
+    p = hits[0]
+    if p['mine']:
+        raise Problem(403, 'You opened this pull request; GitHub needs someone else to approve it.', 'own_pr')
+    review = gh(acct['token'], 'POST', f"/repos/{p['repo']}/pulls/{pr}/reviews", {'event': 'APPROVE', 'body': APPROVE_BODY})
+    if (review.get('state') or '').upper() != 'APPROVED':
+        raise Problem(502, 'GitHub did not record the approval. Try again.')
+    _forget(acct['token'])
+    ref = f'#{pr}' if p['repo'].lower() == full.lower() else f"{p['repo']}#{pr}"
+    out = {'repo': full, 'number': number, 'pr': {k: p[k] for k in ('repo', 'number', 'url', 'title')}, 'approved': True,
+           'review_url': review.get('html_url'), 'comment_url': None, 'warning': None}
+    try:
+        c = add_comment(person, {'repo': full, 'number': number,
+                                 'body': f'Approved PR {ref} in the WizardOS Tracker. Builder: go ahead and merge it.'}, agent)
+        out['comment_url'] = c.get('comment_url')
+    except Problem as e:
+        out['warning'] = f'The PR is approved, but the comment for the builder did not save ({e.message}). Reply on the item so it carries on.'
+    return out
 
 
 def repos(person):
@@ -2920,8 +3020,10 @@ def board_split(person, args):
         elif group == 'answer':
             q_ = builder_question([(((c.get('author') or {}).get('login') or ''), c.get('body') or '')
                                    for c in (n.get('comments') or {}).get('nodes') or []], base)
+            rows_ = [(((c.get('author') or {}).get('login') or ''), c.get('body') or '') for c in (n.get('comments') or {}).get('nodes') or []]
             extra = {'question': q_['question'], 'asked': q_['asked'], 'asked_at': q_['at'],
-                     'turn': bool(q_['asked']) and person_of(login, base) in q_['asked']}
+                     'answered': answered_after(rows_, q_['at'], base)}   # 0.42.0: someone replied; the builder carries on
+            extra['turn'] = bool(q_['asked']) and person_of(login, base) in q_['asked'] and not extra['answered']
         if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
             extra['shipped'] = True
             extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
@@ -4166,7 +4268,11 @@ def issue_detail(person, args):
         goal['can_status'] = can_update_goal(acct.get('login') or '', [a.get('login') for a in it.get('assignees') or [] if isinstance(a, dict)])
         goal['status_rule'] = '' if goal['can_status'] else goal_updaters_rule([])
     labels_low = [str(l.get('name', '')).lower() for l in it.get('labels') or [] if isinstance(l, dict)]
-    return {'kind': kind, **goal, 'category': category(full, labels_low),
+    try:   # 0.42.0: an item waiting on an answer offers 'Approve PR #N' for its linked open PRs
+        prs = answer_prs(acct, full, number, it) if any(l.startswith(BLOCKED_LABEL) for l in labels_low) else []
+    except Problem:
+        prs = []
+    return {'kind': kind, **goal, 'category': category(full, labels_low), 'approve_prs': prs,
             'can_close': goal['can_close_goal'] if kind == 'goal' else same_person(who(it), acct.get('login') or ''),
             'close_rule': goal['close_rule'] if kind == 'goal' else f'Only {person_of(who(it)) or "whoever opened it"} can close this {kind}.',
             'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
@@ -4352,6 +4458,15 @@ def builder_question(rows, base=None):
     if len(q) > 320:
         q = q[:319].rsplit(' ', 1)[0] + '…'
     return {'question': q, 'asked': mention_names(body, base), 'at': k}
+
+def answered_after(rows, at, base=None):
+    """0.42.0: a team member (not the builder) commented after the builder's question at index `at`."""
+    if at is None:
+        return False
+    base = base or policy_base()
+    bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
+    return any((who or '').lower() not in bots and on_team(who, base) for who, _ in (rows or [])[at + 1:])
+
 
 def bug_check_info(bodies):
     """0.26 (Miguel, 11 Nov): what the builder handed over for a bug's optional check, from its comments (newest wins):
@@ -5016,6 +5131,7 @@ TOOLS = [
     {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
     {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where. A feature's answer lists possible_duplicates (open items that look the same) when there are any: tell your person.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
+    {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
     {'name': 'builder_status', 'description': 'Is the WizardOS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
@@ -5037,6 +5153,7 @@ CALLS = {
     'board_report_bug': lambda a: report_bug(None, a, agent=True),
     'board_report_feature': lambda a: report_feature(None, a, agent=True),
     'board_comment': lambda a: add_comment(None, a, agent=True),
+    'board_approve_pr': lambda a: approve_pr(None, a, agent=True),
     'report_or_request': lambda a: report_file(None, a, agent=True),
     'board_add_goal': lambda a: add_goal(None, a, agent=True),
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
@@ -5239,6 +5356,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/issue/reopen': lambda: set_state(who, body, 'open'),
                 '/api/issue/task': lambda: set_task(who, body),
                 '/api/issue/comment': lambda: add_comment(who, body),
+                '/api/pr/approve': lambda: approve_pr(who, body),
                 '/api/new': lambda: new_item(who, body),
                 '/api/report': lambda: report_file(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
