@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.41.1
+version: 0.42.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -38,7 +38,7 @@ Labels: `building`, `ai-review`, `ready-to-test` (Human review), `show-and-tell`
 - **Drop / Not a bug** (0.27): when someone on the team says a feature isn't needed (or a bug is not a bug / won't fix), `board_drop {issue, reason, owner_request}` with their short reason; it closes as not planned with `dropped` (or `wontfix`) and a comment naming who and why. A feature already merged behind its switch gets `switch-cleanup`; the builder files a `switch-remove` cleanup that removes the switch and its code. Turn its Try it switch off first. In the app this is the card's ⋯ menu.
 - **Report something else while testing** (0.27): `report_or_request` with the owner's words; it is always its own bug or feature, never a comment on the item under test.
 
-- **Needs an answer** (0.28): an open item labelled `builder:blocked` (the builder asked a question and paused) is in its own stage (`groups.answer` in `/api/split`), with `question` (plain words), `asked` (team names the builder @-mentioned) and `waiting_on`. To answer, comment on the issue (with the person's words); any team member's comment takes `builder:blocked` off within 10 minutes. Never remove the label yourself.
+- **Needs an answer** (0.28): an open item labelled `builder:blocked` (the builder asked a question and paused) is in its own stage (`groups.answer` in `/api/split`), with `question` (plain words), `asked` (team names the builder @-mentioned) and `waiting_on`. To answer, comment on the issue (with the person's words); any team member's comment takes `builder:blocked` off within 10 minutes. Never remove the label yourself. 0.42.0: people answer in the item sheet's reply box (a comment as them; the card shows `answered`). When the question is a blocked pull request (e.g. 'approval from someone other than the last pusher'), the sheet shows **Approve PR #N** (`POST /api/pr/approve {repo, number, pr, pr_repo}`; `GET /api/detail` lists `approve_prs`); agents use `board_approve_pr {issue, pr, owner_request}` only when a human asked: it approves the open linked PR with the agent's account and comments so the builder merges. GitHub refuses approving your own PR; an approval counts only if that account's review counts for the repo.
 
 Queued cards say why they wait: 'Next for the builder', or 'Oscar builds this one' (wizardos-tracker and wizardos-builder: the builder skips them).
 
@@ -80,7 +80,7 @@ The Update manager and Try changes live in the Tracker's **Settings** (WizardOS 
 ## Rules for agents
 - **Link the exact item** (0.33.8): whenever you mention a Tracker item to the owner, give the relative link `/wizardos-tracker/#item/<owner>/<repo>/<number>` (e.g. `/wizardos-tracker/#item/humanitylabs-org/wizard-ux/1191`); it opens that card in its own tab. Never say "find it in the Tracker".
 - Read freely: `board_list` (`repo`, `type` all|goal|bug — features come with `all`, `state` open|closed), `board_get` (`issue` "owner/repo#123" or `repo` + `number`), `board_flow` (time per stage, kick-backs), `builder_status`, `try_status`.
-- Write: `board_report_bug`, `board_report_feature`, `board_comment`, `ai_review_pass` / `ai_review_fail`. Write a clear first paragraph (rows show it, cut at `---`) and assign the owner on GitHub. Link PRs with `Fixes owner/repo#123`.
+- Write: `board_report_bug`, `board_report_feature`, `board_comment`, `board_approve_pr` (human asked), `ai_review_pass` / `ai_review_fail`. Write a clear first paragraph (rows show it, cut at `---`) and assign the owner on GitHub. Link PRs with `Fixes owner/repo#123`.
 - **GitHub limit reached; back in N minutes** (0.39.1): the account's GitHub allowance (5,000 an hour, shared by every box it is signed in on) is spent. Tell the owner when it comes back and stop calling Tracker tools until then; every call fails at once without asking GitHub.
 - Goals: never open, close or reopen on your own. `board_add_goal` only when a human asked, with their exact words as `owner_request`.
 - `board_close` / `board_reopen`: only for the opener's side; goals are always refused for agents (only James closes a goal).

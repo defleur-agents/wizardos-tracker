@@ -755,7 +755,7 @@ const STAGE_INFO = {
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Waiting for the WizardOS Builder to start. It then moves to Building.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
-  answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in a comment on the item: any team member’s reply puts it back in the builder’s queue within 10 minutes.',
+  answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in the reply box on the item (or Approve PR #N when it waits on a pull request): any team member’s reply puts it back in the builder’s queue within 10 minutes.',
   test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Needs changes (with what should change). Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
@@ -1559,6 +1559,7 @@ function whereLine(i) {
   if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? [firstLine(ob.fix) + ', then check it', ''] : ['', '']; }
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
+  if (g === 'answer' && i.answered) return ['Answered · back to the builder within 10 minutes', ''];   // 0.42.0
   if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
   if (g === 'building') return ['The builder is on it', ''];
   if (g === 'queued') return ['Queued · ' + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
@@ -1769,13 +1770,14 @@ function actionArea(i, inDetail) {
     return row;
   }
   if (g === 'answer') {
-    // 0.28: Answer opens the detail (the builder's whole comment is there); a reply on GitHub by anyone on the team
-    // takes builder:blocked off within 10 minutes, so no write here
+    // 0.28: Answer opens the detail (the builder's whole comment is there). 0.42.0: the detail has a reply box and,
+    // when the question is about a pull request, Approve PR #N; any team member's reply takes builder:blocked off
+    // within 10 minutes
     if (!inDetail) row.append(smallBtn('Answer', () => openDetail(i, true)));
-    const gh = link('bd-mini bd-ghlink', i.url); gh.textContent = inDetail ? 'Answer on GitHub ↗' : 'Open on GitHub ↗';
+    const gh = link('bd-mini bd-ghlink', i.url); gh.textContent = 'Open on GitHub ↗';
     gh.addEventListener('pointerdown', e => e.stopPropagation()); gh.onclick = e => e.stopPropagation();
     row.append(gh);
-    if (inDetail) row.append(make('span', 'bd-why-s', 'Reply in a comment. Any team member’s reply sends it back to the builder within 10 minutes.'));
+    if (inDetail) row.append(make('span', 'bd-why-s', i.answered ? 'Answered. The builder picks it up within 10 minutes.' : 'Answer in the reply box below. Any team member’s reply sends it back to the builder within 10 minutes.'));
     return row;
   }
   if (g === 'test' && i.nextrel) { row.classList.add('bd-act-quiet'); row.append(moreBtn(i, false)); return row; }
@@ -2346,6 +2348,8 @@ function openDetail(i, toAct) {
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   closeCtl(null);
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
+  replyBox(i, toAct);
+  approveBox(i, null);
   itemFlow(i);
   WzSheet.open(dlg);
   dlg.scrollTop = 0;
@@ -2414,6 +2418,128 @@ function fill(d) {
     li.append(head, prose(c.body_html, ''));
     return li;
   }));
+  for (const x of pendingReplies.get(d.id) || []) el('d-comments').append(x.li);   // still sending or unsent: keep it showing
+  if (el('d-comments').children.length) el('d-comments-h').hidden = false;
+  approveBox(openItem && openItem.id === d.id ? openItem : d, d);
+}
+
+// ---------- 0.42.0 (Miguel, 20 Nov 2026): answer the builder and approve its blocked PR without leaving the Tracker ----------
+// The reply box posts a GitHub comment as the signed-in person (POST api/issue/comment). The comment shows in the list
+// and the card says Answered the same frame; only a failure marks the comment Not sent, with Retry.
+const pendingReplies = new Map();   // item id -> [{li, text}] still sending or failed
+const myLogin = () => (me && me.account && me.account.login) || 'you';
+function cardsOf(id) {
+  const out = [];
+  for (const v of Object.keys(cache)) { const d = cache[v]; if (d && d.groups) for (const g of Object.keys(d.groups)) for (const x of d.groups[g] || []) if (x.id === id) out.push(x); }
+  if (openItem && openItem.id === id && !out.includes(openItem)) out.push(openItem);
+  return out;
+}
+function markAnswered(id, on) {
+  const was = cardsOf(id).map(x => [x, x.answered, x.comments, x.turn]);
+  for (const [x] of was) { if (x.group === 'answer') { x.answered = on; if (on) x.turn = false; } x.comments = (x.comments || 0) + (on ? 1 : 0); }
+  if (cache[view] && cache[view].groups) render(cache[view]);
+  return () => { for (const [x, a, c, t] of was) { x.answered = a; x.comments = c; x.turn = t; } if (cache[view] && cache[view].groups) render(cache[view]); };
+}
+function pendingComment(text, note) {
+  const li = make('li', 'bd-comment bd-pending');
+  const head = make('p', 'bd-meta');
+  const st = make('span', 'bd-reply-st', note || ' · Sending…');
+  head.append(make('b', 'bd-author', myLogin()), st);
+  const body = make('div', 'bd-prose');
+  for (const para of text.split(/\n\s*\n/)) body.append(make('p', '', para));
+  li.append(head, body);
+  el('d-comments').append(li); el('d-comments-h').hidden = false;
+  return { li, st };
+}
+async function sendReply(i, text, rec) {
+  const roll = markAnswered(i.id, true);
+  rec.li.classList.add('bd-pending'); rec.li.classList.remove('bd-unsent'); rec.st.textContent = ' · Sending…';
+  const old = rec.li.querySelector('.bd-unsent-l'); if (old) old.remove();
+  const list = pendingReplies.get(i.id) || []; if (!list.includes(rec)) list.push(rec); pendingReplies.set(i.id, list);
+  try {
+    await api('api/issue/comment', { repo: i.repo, number: i.number, body: text });
+    rec.li.classList.remove('bd-pending'); rec.st.textContent = ' · just now';
+    pendingReplies.set(i.id, (pendingReplies.get(i.id) || []).filter(x => x !== rec));
+    details.delete(i.id);
+    toast(i.group === 'answer' ? 'Sent. The builder picks it up within 10 minutes.' : 'Comment sent.');
+  } catch (err) {
+    roll();
+    rec.li.classList.remove('bd-pending'); rec.li.classList.add('bd-unsent'); rec.st.textContent = ' · Not sent';
+    const row = make('div', 'bd-unsent-l');
+    row.append(make('span', 'wz-status error', 'Not sent: ' + err.message), smallBtn('Retry', () => sendReply(i, text, rec)));
+    rec.li.append(row);
+  }
+}
+function replyBox(i, toAct) {
+  const f = el('d-reply'), ta = el('d-reply-t'), go = el('d-reply-go');
+  const signed = !!(me && me.connected);
+  f.hidden = !signed;
+  if (!signed) return;
+  const answer = i.group === 'answer';
+  el('d-reply-l').textContent = answer ? 'Answer the builder' : 'Add a comment';
+  ta.placeholder = answer ? 'Your answer (it goes on the item as a comment)' : 'Write a comment';
+  el('d-reply-n').textContent = 'Posted on GitHub as ' + myLogin() + '.' + (answer ? ' The builder carries on within 10 minutes.' : '');
+  if (f.__for !== i.id) { ta.value = ''; f.__for = i.id; }
+  go.disabled = !ta.value.trim();
+  if (toAct && answer) setTimeout(() => { if (openId === i.id) { f.scrollIntoView({ block: 'center' }); ta.focus(); } }, 120);
+}
+el('d-reply-t').addEventListener('input', () => { const v = el('d-reply-t').value.trim(); el('d-reply-go').disabled = !v; hold(!!v); });
+el('d-reply-t').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); el('d-reply').requestSubmit(); } });
+el('d-reply').addEventListener('submit', e => {
+  e.preventDefault();
+  const i = openItem, ta = el('d-reply-t'), text = ta.value.trim();
+  if (!i || !text) return ta.focus();
+  ta.value = ''; el('d-reply-go').disabled = true; hold(false);   // the tap registers before any I/O
+  const rec = pendingComment(text);
+  rec.text = text;
+  sendReply(i, text, rec);
+});
+// Approve PR #N: an item in Needs an answer whose open linked pull request waits on a review (e.g. GitHub's 'approval
+// from someone other than the last pusher'). An APPROVE review as you, then a comment so the builder merges.
+const approvedPrs = new Set();   // 'item id|repo#n' approved from this page
+function approveBox(i, d) {
+  const box_ = el('d-approve');
+  const prs = (d && d.approve_prs) || [];
+  if (!d || !(me && me.connected) || !prs.length || (i.group && i.group !== 'answer')) { box_.hidden = true; return box_.replaceChildren(); }
+  box_.hidden = false;
+  box_.replaceChildren(...prs.map(p => approveRow(i, d, p)));
+}
+function approveRow(i, d, p) {
+  const row = make('div', 'bd-apr'), key = `${d.id}|${p.repo}#${p.number}`;
+  const same = (p.repo || '').toLowerCase() === (d.repo || '').toLowerCase();
+  const t = make('span', 'bd-apr-t', `${same ? '' : repoName(p.repo) + ' '}PR #${p.number}${p.title ? ': ' + p.title : ''}${p.draft ? ' (draft)' : ''}`);
+  const a = link('bd-mini bd-ghlink', p.url); a.textContent = 'See the PR ↗';
+  if (approvedPrs.has(key)) { row.append(t, make('span', 'bd-apr-ok', `PR #${p.number} approved ✓`), a); return row; }
+  if (p.mine) { row.append(t, greyBtn(`Approve PR #${p.number}`, 'You opened this pull request; GitHub needs someone else to approve it.'), a); return row; }
+  const say_ = make('span', 'wz-status', '');
+  const b = smallBtn(`Approve PR #${p.number}`, btn => askPop(btn, `Approve ${same ? '' : repoName(p.repo) + ' '}PR #${p.number} on GitHub as ${myLogin()}? The builder then merges it.`, 'Approve', () => approvePr(i, d, p, row, btn, say_)));
+  b.classList.add('bd-mini-go');
+  row.append(t, b, a, say_);
+  return row;
+}
+async function approvePr(i, d, p, row, b, say_) {
+  const done = busyOn(b);   // the tap shows at once, before the request
+  say_.className = 'wz-status'; say_.textContent = '';
+  const roll = markAnswered(d.id, true);
+  const same = (p.repo || '').toLowerCase() === (d.repo || '').toLowerCase();
+  const rec = pendingComment(`Approved PR ${same ? '#' + p.number : p.repo + '#' + p.number} in the WizardOS Tracker. Builder: go ahead and merge it.`);
+  try {
+    const r = await api('api/pr/approve', { repo: d.repo, number: d.number, pr: p.number, pr_repo: p.repo });
+    approvedPrs.add(`${d.id}|${p.repo}#${p.number}`);
+    details.delete(d.id);
+    if (r.warning) { rec.li.remove(); roll(); }   // approved, but the comment did not save: the reply box is still there
+    else { rec.li.classList.remove('bd-pending'); rec.st.textContent = ' · just now'; }
+    row.replaceChildren(...[...row.childNodes].filter(x => x.classList && x.classList.contains('bd-apr-t')), make('span', 'bd-apr-ok', `PR #${p.number} approved ✓`),
+      ...(r.warning ? [make('span', 'wz-status error', r.warning)] : []));
+    toast(r.warning ? `PR #${p.number} approved. Reply so the builder carries on.` : `PR #${p.number} approved. The builder merges it within 10 minutes.`);
+  } catch (err) {
+    done(); roll(); rec.li.remove();
+    say_.className = 'wz-status error'; say_.textContent = 'Not approved: ' + err.message + ' ';
+    const again = smallBtn('Retry', () => { again.remove(); approvePr(i, d, p, row, b, say_); });
+    say_.append(again);
+    return;
+  }
+  done();
 }
 el('detail').addEventListener('close', () => { openId = null; openItem = null; unpop(); hold(false); });
 
@@ -3366,7 +3492,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.41.1';
+const PAGE_VERSION = '0.42.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3449,7 +3575,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.41.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.42.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

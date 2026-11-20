@@ -130,11 +130,18 @@
       <p id="d-steps" class="bd-d-steps" hidden></p>
       <div id="d-goal" class="bd-d-goal" hidden></div>
       <div id="d-act" class="bd-d-act" hidden></div>
+      <div id="d-approve" class="bd-d-approve" hidden></div>
       <button type="button" id="d-more" class="bd-d-more" hidden>Show the full history</button>
       <div id="d-flow" class="bd-d-flow"></div>
       <div id="d-body" class="bd-d-body"></div>
       <h3 id="d-comments-h" class="bd-sec-h bd-d-h" hidden>Comments <span class="bd-n" id="d-n-comments"></span></h3>
       <ol id="d-comments" class="bd-comments"></ol>
+      <form id="d-reply" class="bd-fail bd-d-reply" autocomplete="off" hidden>
+        <label class="bd-fail-l" id="d-reply-l" for="d-reply-t">Add a comment</label>
+        <textarea id="d-reply-t" class="wz-input bd-area" rows="3" maxlength="8000" placeholder="Write a comment"></textarea>
+        <p class="bd-why-s" id="d-reply-n">Posted on GitHub as you.</p>
+        <div class="bd-d-reply-go"><button type="submit" class="wz-button" id="d-reply-go" disabled>Send</button></div>
+      </form>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary bd-d-close" id="d-close" hidden>Mark done</button> <a id="d-gh" class="bd-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>
     </dialog>
     <dialog id="filter" class="wz-sheet bd-filter" aria-labelledby="filter-h">

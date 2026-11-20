@@ -20,7 +20,7 @@ class Swept(unittest.TestCase):
     def test_policy_accept_time_is_seven_days(self):
         flow = S.policy()['builder_rules']['bug_flow']
         self.assertEqual(flow['auto_accept_seconds'], 7 * 86400)   # builder-tick reads this
-        self.assertEqual(S.VERSION, '0.41.1')
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 41, 1))
 
     def test_new_sweep_comment_reads_checked_7_days(self):
         n = node(('wizardos-builder[bot]', "Checked (no problems in 7 days): this fix shipped 7+ days ago and nobody said it "
