@@ -157,7 +157,7 @@ class Page(unittest.TestCase):
 
     def test_versions_agree(self):
         v = S.VERSION
-        self.assertRegex(v, r'^0\.3[5-9]\.')
+        self.assertRegex(v, r'^0\.(3[5-9]|[4-9][0-9])\.')
         self.assertIn(f"PAGE_VERSION = '{v}'", JS)
         self.assertIn(f"version: '{v}' }})", JS)
         self.assertIn(f'**{v}**', (ROOT / 'wizard.md').read_text())
