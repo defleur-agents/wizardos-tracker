@@ -18,7 +18,7 @@
 // (wizard-os#423). Stats count items 'Still not working' (Doesn't work said more than once); the detail shows a badge.
 // WizardOS Tracker 0.18: Goals | Core features | App features | Bugs. Core vs app comes from the repo (policy
 // core_repos). Bugs and app features: Filed → Building → AI review → Human review (by the filer) → Shipping → Done.
-// Core features: Waiting for approval (0.18.2: James or Miguel) → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
+// Core features (0.41.0: filed since the policy cutover need no approval; older ones Waiting for approval) → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
 // Shipping = approved, not yet in a release for everyone; Done = 'Shipped in <version>'. Goals are human-led: a status
 // (0.38.0: In progress / Blocked / Pending final review) with a short human status, owners, linked items by stage. Cards: title, one
 // 'where it is and what's next' line, ONE action area (Update / Try / Works · Doesn't work / Approve), small meta.
@@ -451,7 +451,9 @@ function render(d) {
   if (window.FeedbackStage) groups.feedback = FeedbackStage.items(d.view);   // 0.26.5: Pending approval, first
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
   const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
-  const bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
+  let bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
+  // 0.41.0: once the old backlog is approved, Waiting for approval leaves the strip
+  if (d.view === 'core' && !(groups.james || []).length && stage[d.view] !== 'james') bins = bins.filter(b => b.key !== 'james');
   strip(d, bins, groups);
   flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
@@ -749,9 +751,9 @@ const STAGE_INFO = {
   testers: 'The fix is in the For testers release. Checking it is optional and never holds it up: tap Check it, look, then Works (tags it Checked by you) or Still broken (back to Building, kept out of Stable).',
   everyone: 'The fix reached everyone: the Stable WizardOS release, or the app’s Store release. A Checked tag says who looked at it and when.',
   checked: 'Whoever filed it said Works, or 7 days passed with no Still broken: Checked (no problems in 7 days). Each card also says which release has it.',
-  james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
+  james: 'Older core features only: James or Miguel approves before the builder starts. New ones go straight to the builder.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
-  corebuild: 'Approved by James or Miguel, waiting for the WizardOS Builder to start. It then moves to Building.',
+  corebuild: 'Waiting for the WizardOS Builder to start. It then moves to Building.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in a comment on the item: any team member’s reply puts it back in the builder’s queue within 10 minutes.',
   test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Needs changes (with what should change). Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
@@ -764,9 +766,10 @@ function binsOf(v) {
   const ASK = { key: 'answer', word: 'Needs an answer', groups: ['answer'], tip: 'The builder asked a question and paused' };
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test', 'nextrel'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
-  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
+  // 0.41.0 (Miguel, 20 Nov): new core features need no approval; Waiting for approval holds only the older backlog
+  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'Older core features: James or Miguel approves' },
     // 0.36.6 (James, 17 Nov): Building is its own stage again, so you see whether the builder is working
-    { key: 'queued', word: 'Build queue', groups: ['queued'], info: 'corebuild', tip: 'Approved, waiting for the builder' },
+    { key: 'queued', word: 'Build queue', groups: ['sorting', 'queued'], info: 'corebuild', tip: 'Waiting for the builder' },
     { key: 'building', word: 'Building', groups: ['building'], info: 'building', tip: 'The builder is on it' }, ASK, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
@@ -783,7 +786,7 @@ function sectionsOf(v) {
   if (v === 'bugs') return [['answer', 'Needs an answer'], ['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
   return [['test', 'Human review'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
-    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
+    ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
 function strip(d, bins, groups) {
@@ -1558,7 +1561,7 @@ function whereLine(i) {
   if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
   if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
   if (g === 'building') return ['The builder is on it', ''];
-  if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
+  if (g === 'queued') return ['Queued · ' + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
   if (g === 'sorting' && i.pre_approved) return ['Approved · the builder files it in the right place, then starts', ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
   if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
@@ -1617,6 +1620,8 @@ function itemCard(i) {
   }
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
+  const dp = dupeRow(i);   // 0.41.0
+  if (dp) c.append(dp);
   const tag = checkTag(i);
   if (tag) c.append(tag);
   const rel = i.kind === 'bug' && i.shipped ? '' : releaseOf(i);   // 0.20: a bug's line already names it
@@ -2091,6 +2096,23 @@ function tested(i, works, note, b, screenshots) {
       toast(msg); say(msg, 'error');
     });
   return true;
+}
+// 0.41.0 (Miguel, 20 Nov): a feature that looks like an open item carries possible-duplicate; the builder waits.
+// Anyone on the team clears it with Not a duplicate (or any comment on GitHub).
+const isDupe = i => !!i && i.state !== 'closed' && (i.dupe || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'possible-duplicate')));
+function dupeRow(i) {
+  if (!isDupe(i)) return null;
+  const row = make('div', 'bd-fbchips');
+  const chip = make('span', 'bd-fbchip small', 'Possible duplicate');
+  chip.title = 'The builder waits. See the comment for the match.';
+  row.append(chip, smallBtn('Not a duplicate', b => notDupe(i, b)));
+  return row;
+}
+async function notDupe(i, b) {
+  const done = busyOn(b);
+  try { await api('api/not-duplicate', { repo: i.repo, number: i.number }); done(); afterAct(i, 'Not a duplicate: the builder may start.'); }
+  catch (err) { done(); pop(b, '', err.message); }
+  finally { done(); }
 }
 async function james(i, decision, note, b) {
   const done = decision === 'approve' ? busyOn(b) : () => {};
@@ -3344,7 +3366,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.40.0';
+const PAGE_VERSION = '0.41.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3427,7 +3449,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.40.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.41.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -178,7 +178,8 @@
         busy = false; WzSheet.close($('report'));
         if (typeof sent === 'function') try { sent(out); } catch (_) {}
       } else {
-        $('rr-landed').textContent = (out.sent || SENT) + (out.warning ? ' ' + out.warning : '');
+        const dup = (out.possible_duplicates || []).map(x => x.id).join(', ');   // 0.41.0
+        $('rr-landed').textContent = (out.sent || SENT) + (dup ? ' Possible duplicate of ' + dup + '.' : '') + (out.warning ? ' ' + out.warning : '');
         $('rr-link').href = out.url || '#';
         $('rr-form').hidden = true; $('rr-done').hidden = false; $('rr-close').focus();
       }
