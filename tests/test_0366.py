@@ -38,7 +38,7 @@ console.log(JSON.stringify(b.map(x => [x.key, x.word, x.groups])));"""
         bins = self.run_js(src)
         q = next(x for x in bins if x[1] == 'Build queue')
         bl = next(x for x in bins if x[1] == 'Building')
-        self.assertEqual(q[2], ['queued'])
+        self.assertEqual(q[2], ['sorting', 'queued'])   # 0.40.0: new core items being sorted wait for the builder, not for approval
         self.assertEqual(bl[2], ['building'])
         self.assertEqual([x[0] for x in bins].index('building'), [x[0] for x in bins].index('queued') + 1)
         self.assertEqual(len({x[0] for x in bins}), len(bins))       # stage keys stay unique

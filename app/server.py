@@ -27,6 +27,7 @@ import sys
 if '__file__' in globals():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import report as reporter  # noqa: E402  0.20: the 'Report or request' form (its own module, a future standalone app)
+import dupes  # noqa: E402  0.41.0: the duplicate check at filing
 import feedback_inbox  # noqa: E402  0.26.5: the Feedback app's inbox (Pending approval), through the Feedback relay
 
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
@@ -34,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.40.0'
+VERSION = '0.41.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1047,7 +1048,8 @@ def shape(node):
             'number': node['number'], 'title': node.get('title'), 'url': node.get('url'),
             'type': 'goal' if 'goal' in low else 'bug' if 'bug' in low else 'feature' if 'feature' in low else 'other',   # 0.18.1: bug wins
             'category': category(node['repository']['nameWithOwner'], low),   # 0.18: goal | core | app | bug (core vs app from the repo)
-            'stage': item_group(node['repository']['nameWithOwner'], low, (node.get('state') or '').lower()) if 'goal' not in low else None,
+            'stage': item_group(node['repository']['nameWithOwner'], low, (node.get('state') or '').lower(), None,
+                                node.get('createdAt'), node.get('body')) if 'goal' not in low else None,
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
             'labels': labels, 'author': (node.get('author') or {}).get('login'),
             'created_at': node.get('createdAt'), 'updated_at': node.get('updatedAt'), 'closed_at': node.get('closedAt'),
@@ -1294,6 +1296,71 @@ def _ux_labels(acct, full):
     _ensure_label(acct, full, JAMES_LABEL, '0e8a16', 'Approved: the builder may start')
 
 
+# ---------- 0.41.0 (Miguel, 20 Nov): duplicate check at filing ----------
+# A feature filed through the Tracker (form, board_report_feature, report_or_request kind feature) is compared with every
+# open feature and bug on the board (title + first paragraph; app/dupes.py). Likely matches get ONE short comment
+# 'Possible duplicate of <links>' and label possible-duplicate, which the builder skips until a team member comments
+# (builder-tick dupe sweep) or taps Not a duplicate. Never fails the filing.
+DUPE_FIELDS = ' number title url body createdAt author { login } repository { nameWithOwner }'
+DUPE_LIMIT = 600
+DUPE_NOTE = 'Possible duplicate'
+
+
+def dupe_candidates(token, org):
+    """Open features and bugs on the board (no goals, no hidden repos) -> [{id, title, url, para}]."""
+    page = 'query($q: String!, $after: String) { ' + _PAGE % (100, DUPE_FIELDS) + ' }'
+    nodes, _ = _view_nodes(token, f'org:{org} is:issue is:open -label:goal', limit=DUPE_LIMIT, query=page)
+    return [{'id': f"{n['repository']['nameWithOwner']}#{n['number']}", 'repo': n['repository']['nameWithOwner'],
+             'number': n['number'], 'title': n.get('title') or '', 'url': n.get('url'), 'para': describe(n.get('body'), 600),
+             'author': (n.get('author') or {}).get('login'), 'ts': _ts(n.get('createdAt') or ''),
+             'refs': dupes.refs(n.get('body'), n['repository']['nameWithOwner'], org)}
+            for n in nodes]
+
+
+def dupe_check(acct, made, title, body):
+    """Compare a just-filed feature with the board; on matches comment once and label it. -> [{id, title, url, score}]."""
+    try:
+        full, number = made['repo'], made['number']
+        org = settings()['org']
+        new = {'id': made['id'], 'repo': full, 'title': title, 'para': describe(body, 600), 'author': acct.get('login'),
+               'ts': time.time(), 'refs': dupes.refs(body, full, org)}
+        found = dupes.matches(new, [c for c in dupe_candidates(acct['token'], org) if c['id'] != made['id']])
+        if not found:
+            return []
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': dupes.comment(found)})
+        _ensure_label(acct, full, dupes.LABEL, 'cfd3d7', 'Looks like an open item; the builder waits for a team member')
+        try:
+            _add_label(acct, full, number, dupes.LABEL)
+        except Problem:
+            pass
+        return [{'id': f['id'], 'title': f['title'], 'url': f['url'], 'score': f['score']} for f in found]
+    except Exception as e:   # noqa: BLE001  the item is filed; a failed check must not fail the request
+        print(f'dupe check failed: {e}', file=sys.stderr)
+        return []
+
+
+def not_duplicate(person, args):
+    """POST /api/not-duplicate {repo, number}: anyone on the team removes possible-duplicate (the builder may start)."""
+    _, acct = account_for(person)
+    full, number = _target(args)
+    login = acct.get('login') or ''
+    if not on_team(login):
+        raise Problem(403, 'Only the WizardOS team can say this.', 'not_team')
+    cur = _current(acct, full, number)
+    if dupes.LABEL not in _labels(cur):
+        return {'id': f'{full}#{number}', 'labels': _labels(cur), 'saved': True}
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': f'Not a duplicate \u2014 @{login}'})
+    try:
+        gh(acct['token'], 'DELETE', f'/repos/{full}/issues/{number}/labels/{dupes.LABEL}')
+    except Problem:
+        pass
+    after = _current(acct, full, number)
+    if dupes.LABEL in _labels(after):
+        raise Problem(403, 'GitHub did not remove the label (write access to this repo is needed).')
+    _forget(acct['token'])
+    return {'id': f'{full}#{number}', 'labels': _labels(after), 'saved': True}
+
+
 def report_feature(person, args, agent=False):
     """A feature to try (label feature): built switched off, tried in the Tracker, kept or dropped.
     0.37.0: ux_tweak true (UX tweakers only) files it as a UX tweak, approved on filing."""
@@ -1308,7 +1375,9 @@ def report_feature(person, args, agent=False):
     extra, line = ux_lane(acct, args)
     if extra:
         _ux_labels(acct, full)
-    return _create(acct, full, title, body.strip() + line, ['feature'] + extra)
+    out = _create(acct, full, title, body.strip() + line, ['feature'] + extra)
+    out['possible_duplicates'] = dupe_check(acct, out, title, body)   # 0.41.0
+    return out
 
 
 def _current(acct, full, number):
@@ -1600,7 +1669,8 @@ def _card(node, tab):
            'assignees': [a.get('login') for a in (node.get('assignees') or {}).get('nodes') or [] if a and a.get('login')],
            'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body')),
            'from_feedback': feedback_inbox.FROM_LABEL in labels,   # 0.26.5: a 'From Feedback app' chip
-           'ux_tweak': 'ux-tweak' in labels}   # 0.37.0: a 'UX tweak · auto-approved' chip
+           'ux_tweak': 'ux-tweak' in labels,   # 0.37.0: a 'UX tweak · auto-approved' chip
+           'dupe': dupes.LABEL in labels}   # 0.41.0: 'Possible duplicate' chip + Not a duplicate
     if out['comments'] is None:
         out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
@@ -2506,7 +2576,7 @@ GOAL_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                ' repository { nameWithOwner } labels(first: 20) { nodes { name } }'
                ' comments(last: 50) { totalCount nodes { author { login } body createdAt } }'
                ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 100) { nodes { ... on CrossReferencedEvent { source { __typename'
-               '  ... on Issue { number title url state stateReason repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
+               '  ... on Issue { number title url state stateReason createdAt repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
 GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) + ' }'
 # 0.28 (Miguel, 11 Nov): 'answer' = Needs an answer: the builder asked a question and paused (label builder:blocked)
 OPEN_GROUPS = ('test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping')
@@ -2688,19 +2758,20 @@ def queue_reason(repo):
 BLOCKED_LABEL = 'builder:blocked'
 
 
-def item_group(repo, labels, state='open', base=None):
+def item_group(repo, labels, state='open', base=None, created=None, body=None):
     """0.18: the stage of one bug or feature from its labels (open items; closed ones are Shipping or Done).
-    0.28: a queued, building or sorting item labelled builder:blocked is in Needs an answer ('answer')."""
+    0.28: a queued, building or sorting item labelled builder:blocked is in Needs an answer ('answer').
+    0.41.0: `created` (+ body for a refiled copy) says whether a core feature still waits for approval."""
     low = {str(l).lower() for l in labels or []}
     if state == 'closed':
         return 'closed'
-    g = _label_group(repo, low, base)
+    g = _label_group(repo, low, base, created, body)
     if g in ('building', 'queued', 'sorting') and any(l.startswith(BLOCKED_LABEL) for l in low):
         return 'answer'
     return g
 
 
-def _label_group(repo, low, base=None):
+def _label_group(repo, low, base=None, created=None, body=None):
     if TRIAGE_LABEL in low:
         return 'sorting'
     if HUMAN_LABEL in low:
@@ -2713,7 +2784,7 @@ def _label_group(repo, low, base=None):
         return 'shipping'
     if 'building' in low:
         return 'building'
-    if category(repo, low, base) == 'core' and JAMES_LABEL not in low:
+    if needs_approval(repo, low, created, body, base):
         return 'james'
     return 'queued'
 
@@ -2734,7 +2805,7 @@ def linked_items(node, base=None):
             continue
         state = (x.get('state') or '').lower()
         iid = f"{repo}#{x.get('number')}"
-        g = item_group(repo, labels, state, base)
+        g = item_group(repo, labels, state, base, x.get('createdAt'))
         if g == 'closed':
             g = 'shipping' if APPROVED_LABEL in {l.lower() for l in labels} and iid not in kept and (x.get('stateReason') or '').upper() != 'NOT_PLANNED' else 'done'
         out.append({'id': iid, 'repo': repo, 'number': x.get('number'), 'title': x.get('title'), 'url': x['url'],
@@ -2820,7 +2891,7 @@ def board_split(person, args):
         names = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
         author = (n.get('author') or {}).get('login') or ''
         iid = f"{repo}#{n['number']}"
-        group = item_group(repo, names, 'open', base)
+        group = item_group(repo, names, 'open', base, n.get('createdAt'), n.get('body'))
         if group == 'test' and iid in hidden:
             continue
         card = _card(n, 'test' if group in ('test', 'airev', 'show', 'shipping') else 'issues')
@@ -2842,9 +2913,10 @@ def board_split(person, args):
             if cat == 'bug':
                 extra['checked'] = checked_of(n, base)
         elif group == 'queued':
-            extra = {'wait_reason': queue_reason(repo)}
+            extra = {'wait_reason': DUPE_NOTE if dupes.LABEL in {l.lower() for l in names} else queue_reason(repo)}
         elif group == 'sorting':
-            extra = {'wait_reason': SORTING_NOTE, **sorting_approval(cat, names, approver)}
+            extra = {'wait_reason': SORTING_NOTE,
+                     **(sorting_approval(cat, names, approver) if needs_approval(repo, names, n.get('createdAt'), n.get('body'), base) else {})}
         elif group == 'answer':
             q_ = builder_question([(((c.get('author') or {}).get('login') or ''), c.get('body') or '')
                                    for c in (n.get('comments') or {}).get('nodes') or []], base)
@@ -2879,13 +2951,14 @@ def board_split(person, args):
             cat = category(it['repo'], it.get('labels') or [], base)
             if (view == 'bugs') == (cat == 'bug'):
                 own = same_person(it.get('author') or '', login, base)
-                g = 'sorting' if TRIAGE_LABEL in {str(x).lower() for x in it.get('labels') or []} else 'james' if cat == 'core' else 'queued'
+                g = ('sorting' if TRIAGE_LABEL in {str(x).lower() for x in it.get('labels') or []}
+                     else 'james' if needs_approval(it['repo'], it.get('labels') or [], it.get('created_at') or time.time(), None, base) else 'queued')
                 ok = approver if g == 'james' else False
                 groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
                                      'wait_reason': queue_reason(it['repo']) if g == 'queued' else SORTING_NOTE if g == 'sorting' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
-                if g == 'sorting':   # 0.36.5: a core idea can be approved while the builder sorts it
-                    groups[g][0].update(sorting_approval(cat, it.get('labels') or [], approver))
+                if g == 'sorting' and needs_approval(it['repo'], it.get('labels') or [], it.get('created_at') or time.time(), None, base):
+                    groups[g][0].update(sorting_approval(cat, it.get('labels') or [], approver))   # 0.36.5 (old backlog only)
                 groups[g][0]['waiting_on'] = waiting_on(groups[g][0], base)
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -3377,6 +3450,10 @@ POLICY_DEFAULT = {
     # 0.18.2 (wizard-os#423): who approves core features before the builder starts (team names). Show-and-tell stays
     # James's (open.goals). DATA_DIR/policy.json `core_approvers` overrides.
     'core_approvers': ['James', 'Miguel'],
+    # 0.41.0 (Miguel, 20 Nov): core features filed on or after this time need no approval before building (the builder
+    # starts them like app features; James's show-and-tell stays the one yes or no). Older ones keep waiting for
+    # core_approvers. DATA_DIR/policy.json `core_approval_not_needed_since` overrides (ISO time, UTC if no zone).
+    'core_approval_not_needed_since': '2026-11-20T05:31:00Z',
     # 0.37.0 (Miguel, 17 Nov): who may file a UX tweak (team names). A UX tweak is a feature with a fast lane: it is
     # approved on filing (no James approval) and skips show-and-tell. DATA_DIR/policy.json `ux_tweakers` overrides.
     'ux_tweakers': ['Robert'],
@@ -3447,6 +3524,47 @@ def _since(v):
     return POLICY_DEFAULT['since'], 0.0
 
 
+def _cutover(v):
+    """0.41.0: the no-approval cutover -> (iso, unix ts); a missing or bad value is the default."""
+    for raw in (v, POLICY_DEFAULT['core_approval_not_needed_since']):
+        try:
+            d = datetime.fromisoformat(str(raw or '').strip().replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), d.timestamp()
+    return POLICY_DEFAULT['core_approval_not_needed_since'], 0.0
+
+
+FILED_AT = re.compile(r'<!--\s*filed-at:\s*([0-9T:.+-]+Z?)\s*-->')
+
+
+def filed_ts(created, body=None):
+    """0.41.0: when an item was filed (unix seconds) or None. A copy the builder's triage opened carries its original's
+    time in a `<!-- filed-at: ... -->` line, which wins over the copy's own createdAt."""
+    m = FILED_AT.search(body or '') if isinstance(body, str) else None
+    for raw in ((m.group(1) if m else None), created):
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return float(raw)
+        if isinstance(raw, str) and raw.strip():
+            t = _ts(raw.strip())
+            if t is not None:
+                return t
+    return None
+
+
+def needs_approval(repo, labels, created=None, body=None, base=None):
+    """0.41.0: does this core feature still wait for approval? Only one filed before the cutover (or of unknown age)
+    without james-approved. Core features filed since then go straight to the queue."""
+    base = base or policy_base()
+    low = {str(l).lower() for l in labels or []}
+    if category(repo, low, base) != 'core' or JAMES_LABEL in low:
+        return False
+    t = filed_ts(created, body)
+    return t is None or t < _cutover(base.get('core_approval_not_needed_since'))[1]
+
+
 def since_ts(base=None):
     return _since((base or policy_base())['since'])[1]
 
@@ -3483,6 +3601,7 @@ def policy_base():
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
             'core_approvers': ca, 'release_people': rp, 'ux_tweakers': ux,
             'since': _since(over.get('since'))[0],
+            'core_approval_not_needed_since': _cutover(over.get('core_approval_not_needed_since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
 
 
@@ -3623,7 +3742,10 @@ def policy(person=None):
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell (anyone may mark it James approved)",
+             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: no approval before building when filed since "
+             f"{base['core_approval_not_needed_since']} (older ones: James or Miguel approves first); James says yes or no at the show-and-tell (anyone may mark it James approved)",
+             "Duplicates: a new feature that looks like an open feature or bug gets one 'Possible duplicate of' comment and label possible-duplicate; "
+             "the builder skips it until a team member comments or taps Not a duplicate",
              "Bugs (Miguel, 10 Nov): merged switched on and shipping before review; AI check, then the filer's check after the fact. "
              "Doesn't work reopens it to Building. Done once in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work."]
     login = None
@@ -3638,6 +3760,8 @@ def policy(person=None):
             'builds': {'builders': base['builder']['logins']}, 'lines': lines,
             # 0.18: what the builder must honour
             'builder_rules': {'never_build': ['goal'], 'core_repos': base['core_repos'], 'core_feature_needs_label': JAMES_LABEL,
+                              'core_feature_needs_label_if_filed_before': base['core_approval_not_needed_since'],
+                              'skip_labels': [dupes.LABEL],
                               'switch_default_label': DEFAULT_LABEL, 'goal_tag_line': 'Goal: <owner/repo#N> (only on a clear match)',
                               'skip_repos': list(BUILDER_SKIPS),
                               'bug_flow': {'merge': 'switched on, before any review', 'hand_back': AI_LABEL, 'filer_check': HUMAN_LABEL,
@@ -4452,7 +4576,7 @@ def james_decide(person, args):
     names = _labels(cur)
     if category(full, names, base) != 'core':
         raise Problem(409, 'Only core features wait for approval.', 'not_core')
-    if JAMES_LABEL in names or cur.get('state') == 'closed':
+    if JAMES_LABEL in names or cur.get('state') == 'closed' or not needs_approval(full, names, cur.get('created_at'), cur.get('body'), base):
         raise Problem(409, 'This is not waiting for approval any more. Refresh to see the latest.')
     note = args.get('note') if isinstance(args.get('note'), str) else ''
     note = note.strip()[:4000]
@@ -4695,9 +4819,6 @@ def report_next(kind, where, org, base=None):
     """What happens next, in the owner's words, for the 'where it landed' line."""
     base = base or policy_base()
     repo = where['repo']
-    if kind == 'feature' and where['area'] == 'core':
-        names = [str(n) for n in base.get('core_approvers') or []] or ['James', 'Miguel']
-        return 'waits for ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' to approve'
     if repo.split('/')[0].lower() != (org or '').lower():
         return 'its maintainer picks it up'
     if repo.split('/')[-1].lower() in BUILDER_SKIPS:
@@ -4869,7 +4990,8 @@ def report_file(person, args, agent=False):
         with LOCK:
             _made[(_tid(acct['token']), card['id'])] = (time.time(), 'issues', card)
     view = 'bugs' if kind == 'bug' else 'core'
-    return {'item': card, 'url': made['url'], 'repo': where['repo'], 'kind': kind, 'area': 'triage', 'view': view,
+    dup = dupe_check(acct, made, made.get('title') or reporter.title_of(text), text) if kind == 'feature' else []   # 0.41.0
+    return {'item': card, 'url': made['url'], 'possible_duplicates': dup, 'repo': where['repo'], 'kind': kind, 'area': 'triage', 'view': view,
             'landed': reporter.SENT, 'sent': reporter.SENT, 'screenshot': url, 'screenshots': urls, 'waiting': len(left),
             'warning': ' '.join(x for x in (warning, made.get('warning')) if x) or None}
 
@@ -4887,8 +5009,8 @@ TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
-    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
-    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
+    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
+    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where. A feature's answer lists possible_duplicates (open items that look the same) when there are any: tell your person.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
@@ -4940,7 +5062,8 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': AGENT_UPDATE + 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
-                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell (any team member may press 'James approved' for him). "
+                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) filed since /api/policy core_approval_not_needed_since go straight to the builder; older ones still wait for approval by James or Miguel (label james-approved). James says yes or no at the show-and-tell (any team member may press 'James approved' for him). "
+                                 "Filing a feature runs a duplicate check: when the answer has possible_duplicates, tell your person (the item is labelled possible-duplicate and the builder waits until a team member comments or taps Not a duplicate). "
                                  "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set (working, blocked, or review when they think it is done); only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
@@ -5118,6 +5241,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/test/fails': lambda: tested(who, body, False),
                 '/api/goal/status': lambda: goal_status_set(who, body),
                 '/api/james': lambda: james_decide(who, body),
+                '/api/not-duplicate': lambda: not_duplicate(who, body),
                 '/api/feedback/review': lambda: feedback_review(who, body),
                 '/api/show': lambda: show_and_tell(who, body),
                 '/api/drop': lambda: drop_item(who, body),
