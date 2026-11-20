@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.41.0'
+VERSION = '0.41.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4395,9 +4395,13 @@ def checked_of(node, base=None):
     bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
     if closer and closer.lower() not in bots:
         return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base), 'at': node.get('closedAt')}
-    swept = any(((c or {}).get('author') or {}).get('login', '').lower() in bots and '7 days' in ((c or {}).get('body') or '')
-                for c in ((node.get('comments') or {}).get('nodes')) or [])
-    if swept or not closer:
+    # 0.41.1: the builder-tick sweep writes 'Checked (no problems in 7 days): ...'; its 15-20 Nov comments (3-day rule)
+    # started 'Closed automatically:' and showed as 'Closed on merge (no human check)' here.
+    notes = [((c or {}).get('body') or '') for c in ((node.get('comments') or {}).get('nodes')) or []
+             if ((c or {}).get('author') or {}).get('login', '').lower() in bots]
+    if any(b.lstrip().startswith('Closed automatically:') and '3+ days' in b for b in notes) and not any('7 days' in b for b in notes):
+        return {'by': None, 'text': 'Checked (no problems in 3 days)'}
+    if any('7 days' in b for b in notes) or not closer:
         return {'by': None, 'text': 'Checked (no problems in 7 days)'}
     return {'by': None, 'text': 'Closed on merge (no human check)'}   # older items the builder's merge closed
 
