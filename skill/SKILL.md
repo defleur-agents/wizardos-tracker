@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.39.2
+version: 0.40.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -89,7 +89,7 @@ The Update manager and Try changes live in the Tracker's **Settings** (WizardOS 
 - Stats are label-driven (counted since `since` in `/api/policy`): label promptly and honestly.
 
 ## Pitfalls
-- Tools act as the GitHub account first connected on this box. None connected → ask the owner to open WizardOS Tracker and tap **Sign in with GitHub**. Never ask for a token or secret in chat or put one in the repo.
-- The human UI lets in only `humanitylabs-org` members with their own account; agent/builder accounts are refused. If someone is refused, they need org membership or must sign in as themselves; never sign in for them with an agent token.
+- Tools act as the agent's own GitHub account when the owner signed one in (0.40.0: signing in with the agent's account, e.g. Archimedes, saves it for the tools only), else the GitHub account first connected on this box. None connected → ask the owner to open WizardOS Tracker and tap **Sign in with GitHub**. Never ask for a token or secret in chat or put one in the repo.
+- The human UI lets in only `humanitylabs-org` members with their own account; an agent's account is saved for the agent's tools only (never as a person), builder accounts are refused. If someone is refused, they need org membership or must sign in as themselves; never sign in for them with an agent token.
 - Signing out the account the agent uses also stops the agent's tools.
 - Refused as not on the team: they need to be added to humanitylabs-org (or join through the invite waiting on GitHub), then sign in again. `reason: token_dead` = sign-in expired or revoked; tap Sign in with GitHub again.

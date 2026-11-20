@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.39.2'
+VERSION = '0.40.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -68,6 +68,11 @@ AGENT_UPDATE = ('Signing in and updating are the owner\'s taps, never yours. Not
                 'A newer Tracker: its main screen shows an Update button; send the owner there (other apps and WizardOS: Tracker Settings, Update). '
                 'Never run wam, docker or install commands, never ask for a token and never point anyone at config files. ')
 NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
+# 0.40.0 (James, 19 Nov 2026): an agent's own GitHub account (Archimedes, Oscar) may be signed in as the account the
+# agent's Tracker tools use, so they stop acting as the owner's personal (admin) account. It never opens the human UI.
+AGENT_KEY = '~agent'
+AGENT_SAVED = ("{name} is now the account your agent's Tracker tools use, instead of your own. "
+               "To use the Tracker yourself, sign in with your own GitHub account.")
 CACHE_SECONDS = 60
 STATS_SECONDS = 60  # 0.13.9: was 300; the arrows must follow the builder in near real time
 STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
@@ -132,7 +137,17 @@ def settings():
 
 def person_key(person):
     p = (person or '').strip().lower()
-    return p if p and len(p) <= 200 else 'owner'
+    return p if p and len(p) <= 200 and not p.startswith('~') else 'owner'
+
+
+def _first_human(people):
+    return next((k for k in people if k != AGENT_KEY), None)
+
+
+def human_default(a):
+    """The box's first signed-in person (never the agent's own account)."""
+    people = a['people']
+    return a.get('default') if a.get('default') in people and a.get('default') != AGENT_KEY else _first_human(people)
 
 
 def account_for(person=None, agent=False):
@@ -140,8 +155,8 @@ def account_for(person=None, agent=False):
     box's default account: the first person who connected."""
     a = accounts()
     people = a['people']
-    if agent:
-        key = a.get('default') if a.get('default') in people else next(iter(people), None)
+    if agent:  # 0.40.0: the agent's own account when one is signed in, else the first person
+        key = AGENT_KEY if (people.get(AGENT_KEY) or {}).get('token') else human_default(a)
     else:
         key = person_key(person)
     acct = people.get(key) if key else None
@@ -398,7 +413,7 @@ def _sign_out(key, why):
         if old is None:
             return
         if a.get('default') == key:
-            a['default'] = next(iter(a['people']), None)
+            a['default'] = _first_human(a['people'])
         _write('accounts.json', a)
     if old.get('token'):
         _forget(old['token'])
@@ -691,10 +706,12 @@ def connect(person, args, via='token', client_id=None):
         raise Problem(502, 'Could not reach GitHub to check the token. Try again.') from None
     login = user.get('login') or ''
     # 0.12: team-only and human-only. Nothing is stored for a refused sign-in.
-    if is_agent_login(login):
+    builder = login.lower() in {b.lower() for b in BUILDERS}
+    if is_agent_login(login) and builder:
         raise Problem(403, NOT_HUMAN, 'agent')
     if not team_member(token, login):
         raise not_member_problem(token, login)
+    agent_own = is_agent_login(login)  # 0.40.0: saved for the agent's tools only, never as this person
     kind = ('fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_')
             else 'github-app' if token.startswith('ghu_') else 'oauth' if token.startswith('gho_') or via == 'github' else 'token')
     acct = {'token': token, 'login': user.get('login'), 'name': user.get('name'), 'avatar_url': user.get('avatar_url'),
@@ -703,13 +720,46 @@ def connect(person, args, via='token', client_id=None):
         acct.update(_token_fields(args))
         if client_id:
             acct['client_id'] = client_id
+    if agent_own:
+        with LOCK:
+            a = accounts()
+            old = a['people'].get(AGENT_KEY)
+            a['people'][AGENT_KEY] = acct
+            _write('accounts.json', a)
+        if old and old.get('token') and old['token'] != token:
+            _forget(old['token'])
+        raise Problem(403, AGENT_SAVED.format(name=agent_name(login)), 'agent_saved')
     with LOCK:
         a = accounts()
         key = person_key(person)
         a['people'][key] = acct
-        if a.get('default') not in a['people']:
+        if a.get('default') not in a['people'] or a.get('default') == AGENT_KEY:
             a['default'] = key
         _write('accounts.json', a)
+    return status(person)
+
+
+def agent_name(login):
+    low = (login or '').lower()
+    try:
+        for t in policy_base()['team']:
+            for ag in t['agents']:
+                if ag['login'].lower() == low:
+                    return ag.get('name') or login
+    except Exception:  # noqa: BLE001 - a name is only for the message
+        pass
+    return login
+
+
+def agent_disconnect(person):
+    """POST /api/agent-account/disconnect: the agent's tools go back to the first person's account."""
+    gate(person)
+    with LOCK:
+        a = accounts()
+        old = a['people'].pop(AGENT_KEY, None)
+        _write('accounts.json', a)
+    if old and old.get('token'):
+        _forget(old['token'])
     return status(person)
 
 
@@ -855,7 +905,7 @@ def device_poll_once(flow, now=None, wait=None):
             connect(flow['person'], {**d, 'token': d['access_token']}, via='github', client_id=flow['client_id'])  # the same checks as a pasted token
             flow.update(state='done', message='Signed in.')
         except Problem as e:
-            flow.update(state='refused' if e.reason in ('agent', 'not_member') else 'error', message=e.message, reason=e.reason)
+            flow.update(state='refused' if e.reason in ('agent', 'not_member', 'agent_saved') else 'error', message=e.message, reason=e.reason)
         return None
     err = d.get('error')
     if err == 'authorization_pending':
@@ -898,7 +948,7 @@ def disconnect(person):
         key = person_key(person)
         old = a['people'].pop(key, None)
         if a.get('default') == key:
-            a['default'] = next(iter(a['people']), None)
+            a['default'] = _first_human(a['people'])
         _write('accounts.json', a)
     if old and old.get('token'):
         _forget(old['token'])
@@ -920,7 +970,8 @@ def status(person=None):
     acct = None if dead else a['people'].get(person_key(person))
     return {'refused': refused, 'notice': notice, 'team_org': TEAM_ORG, 'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
             'org': settings()['org'], 'token_url': TOKEN_URL, 'oauth': bool(github_client_id()),
-            'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
+            'agent_account': (a['people'].get(AGENT_KEY) or a['people'].get(human_default(a)) or {}).get('login'),
+            'agent_own': bool((a['people'].get(AGENT_KEY) or {}).get('token')), 'version': VERSION,
             'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
             'default_repo': DEFAULT_REPO, 'screenshots': bool(acct and acct.get('token') and _media_ready(acct['token'])),
             # 0.39.1: what GitHub last said about this account's budgets (no request): {core: {remaining, reset_in, limited_for}}
@@ -2312,7 +2363,7 @@ def _warm_delay(now=None):
 def _warm_round():
     """One warm-up round. Skipped (False) when nobody is signed in or the account's GitHub budget is low/limited."""
     a = accounts()
-    key = a.get('default')
+    key = human_default(a)
     token = ((a.get('people') or {}).get(key) or {}).get('token') if key else None
     if not token or not budget_ok(token):
         return False
@@ -3826,7 +3877,7 @@ def _try_key(repo, number):
 def _try_who(person, agent):
     if agent:
         a = accounts()
-        return a.get('default') if a.get('default') in a['people'] else next(iter(a['people']), 'owner')
+        return human_default(a) or 'owner'
     return person_key(person)
 
 
@@ -5052,6 +5103,7 @@ class Handler(BaseHTTPRequestHandler):
             routes = {
                 '/api/connect': lambda: connect(who, body),
                 '/api/disconnect': lambda: disconnect(who),
+                '/api/agent-account/disconnect': lambda: agent_disconnect(who),
                 '/api/settings': lambda: set_org(body),
                 '/api/goals': lambda: add_goal(who, body),
                 '/api/bugs': lambda: report_bug(who, body),
