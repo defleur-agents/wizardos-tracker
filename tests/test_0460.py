@@ -59,8 +59,8 @@ class Policy(unittest.TestCase):
 class Source(unittest.TestCase):
     def test_one_treatment(self):
         self.assertIn("const HUMAN_STEPS = new Set(['feedback', 'show']);", JS)
-        self.assertIn('id="human-n"', HTML)
-        self.assertIn("humanChip('Pending approval')", FB)
+        self.assertNotIn('human-n', HTML)                  # 0.49.0: the row under the strip repeated the strip's two tiles
+        self.assertNotIn('humanChip', FB + JS)             # 0.49.0: the heading and the card's edge say Human
         self.assertIn('--bd-human: var(--bd-warn)', CSS)
         self.assertIn('.bd-dbin .bd-human-w { display: none; }', CSS)   # 0.46.1: icon only in the narrow pop-up steps
 
@@ -101,16 +101,21 @@ class Rendered(unittest.TestCase):
             self.assertTrue(any(not b['human'] for b in o['bins']))   # automatic steps stay neutral
 
     def test_counts(self):
-        self.assertEqual(self.out['apps']['counts'], [['feedback', '1'], ['show', '1']])
-        self.assertEqual(self.out['bugs']['counts'], [['feedback', '1']])
+        # 0.49.0: the strip's own human tiles carry the counts (no second row)
+        self.assertEqual({b['key']: b['n'] for b in self.out['apps']['bins'] if b['human']}, {'feedback': '1', 'show': '1'})
+        self.assertEqual({b['key']: b['n'] for b in self.out['bugs']['bins'] if b['human']}, {'feedback': '1'})
+        self.assertFalse(self.out['apps']['row'] or self.out['bugs']['row'])
+        # and a stage nothing goes through any more is not in the strip while it is empty
+        self.assertEqual([b['key'] for b in self.out['apps']['bins']], ['feedback', 'queued', 'building', 'answer', 'show', 'shipping', 'done'])
 
     def test_headers_and_cards(self):
         o = self.out['apps']
         self.assertEqual({h['id'] for h in o['heads'] if h['human']}, {'sec-feedback', 'sec-show'})
         self.assertTrue(all(not h['human'] for h in o['heads'] if h['id'] not in ('sec-feedback', 'sec-show')))
         cards = {c['title']: c for c in o['cards']}
-        self.assertEqual(cards['Shuffle button']['chip'], 'Human step · Show-and-tell')
-        self.assertEqual(cards['Dark mode please']['chip'], 'Human step · Pending approval')
+        self.assertTrue(cards['Shuffle button']['human'] and cards['Dark mode please']['human'])
+        self.assertIsNone(cards['Shuffle button']['chip'])      # 0.49.0: no chip repeating the heading
+        self.assertIsNone(cards['Dark mode please']['chip'])
         self.assertFalse(cards['Queue view']['human'] or cards['Queue view']['chip'])
 
     def test_item_flow_line(self):

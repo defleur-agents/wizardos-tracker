@@ -159,7 +159,7 @@ class UI(unittest.TestCase):
 const w = v => binsOf(v).map(b => b.word);
 console.log(JSON.stringify([w('core'), w('apps'), w('bugs'), sectionsOf('apps').map(s => s[0]), sectionsOf('bugs').map(s => s[0])]));"""
         core, apps, bugs, sec, bsec = self.run_js(src)
-        self.assertEqual(core[:4], ['Waiting for approval', 'Build queue', 'Building', 'Needs an answer'])
+        self.assertEqual(core[:4], ['Waiting for approval', 'Queued', 'Building', 'Needs an answer'])
         self.assertEqual(apps[:4], ['Queued', 'Building', 'Needs an answer', 'AI review'])
         self.assertEqual(bugs[:3], ['Queued', 'Building', 'Needs an answer'])
         self.assertEqual(sec[:2], ['test', 'answer'])                 # a person's turn, next to Human review

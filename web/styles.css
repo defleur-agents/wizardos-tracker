@@ -1076,7 +1076,7 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
    stage shows (strip, stats, section headers, cards, the item's own line). Every automatic step stays neutral. */
 .bd-app { --bd-human: var(--bd-warn); }
 .bd-human-tag { display: inline-flex; align-items: center; justify-content: center; gap: 2px; font-size: .6rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; line-height: 1; color: var(--bd-human); white-space: nowrap; }
-.bd-human-tag svg, .bd-human-chip svg { width: 1.1em; height: 1.1em; flex: none; fill: currentColor; }
+.bd-human-tag svg { width: 1.1em; height: 1.1em; flex: none; fill: currentColor; }
 .bd-binx.bd-human { border-color: color-mix(in srgb, var(--bd-human) 60%, transparent); background: color-mix(in srgb, var(--bd-human) 12%, var(--fill)); }
 .bd-binx.bd-human .bd-bin-n, .bd-binx.bd-human:not(.on) .bd-bin-n, .bd-binx.bd-human .bd-bin-w { color: var(--bd-human); }
 .bd-binx.bd-human:not(.on) .bd-bin-n { opacity: .7; }
@@ -1088,8 +1088,6 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-sec-h.bd-human .bd-n { color: var(--bd-human); font-weight: 800; }
 .bd-sec-h.bd-human .bd-human-tag { font-size: .66rem; }
 .bd-human-card { border-color: color-mix(in srgb, var(--bd-human) 45%, var(--line)); box-shadow: inset 3px 0 0 var(--bd-human); }
-.bd-human-chip { display: inline-flex; align-items: center; gap: 4px; justify-self: start; min-height: 22px; padding: 0 9px; border-radius: var(--r-pill, 999px); border: 1px solid color-mix(in srgb, var(--bd-human) 60%, transparent); background: color-mix(in srgb, var(--bd-human) 14%, transparent); color: var(--bd-human); font-size: .72rem; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
-.bd-icard > .bd-human-chip { margin-bottom: 2px; }
 .bd-dbin.bd-human { border-color: color-mix(in srgb, var(--bd-human) 60%, transparent); background: color-mix(in srgb, var(--bd-human) 12%, var(--fill)); }
 .bd-dbin.bd-human .bd-dbin-w, .bd-dbin.bd-human .bd-dbin-v { color: var(--bd-human); }
 .bd-dbin.bd-human.cur { border-color: var(--bd-human); box-shadow: inset 0 0 0 1px var(--bd-human); }
@@ -1097,13 +1095,6 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 /* 0.46.1: the pop-up's steps are narrow on a phone: the person icon alone (the step's title and aria-label say Human step) */
 .bd-dbin .bd-human-w { display: none; }
 .bd-dbin .bd-human-tag { font-size: .7rem; }
-.bd-human-n { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: calc(-1 * var(--wz-space-2)) 0 var(--wz-space-3); padding: 0 4px; font-size: var(--wz-text-sm); }
-.bd-human-n[hidden] { display: none; }
-.bd-human-n > .bd-human-tag { font-size: .66rem; }
-.bd-human-c { display: inline-flex; align-items: baseline; gap: 6px; min-height: 30px; padding: 0 10px; border-radius: var(--r-pill, 999px); border: 1px solid color-mix(in srgb, var(--bd-human) 60%, transparent); background: color-mix(in srgb, var(--bd-human) 12%, transparent); color: var(--bd-human); font: inherit; font-weight: 600; cursor: pointer; align-items: center; }
-.bd-human-cn { font-size: 1.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
-.bd-human-c:not(.on) .bd-human-cn { opacity: .7; }
-.bd-human-c:focus-visible { outline: 2px solid var(--bd-human); outline-offset: 2px; }
 
 /* 0.47.0: a show-and-tell card carries the builder's pitch and its After / Before screenshots (two side by side on a phone) */
 .bd-pitch { margin: 0; font-size: var(--wz-text-md); line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1128,3 +1119,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-part:hover { text-decoration: underline; }
 .bd-part:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bd-part-r { font-size: .75rem; color: var(--ink-3); overflow-wrap: anywhere; }
+
+/* 0.49.0 (Miguel, 21 Nov): on a phone the strip shows every stage at once (it scrolled sideways and showed two or
+   three of them). The human tiles keep their colour and the person icon; the word Human is in the section heading. */
+@media (max-width: 599px) {
+  .bd-strip { overflow-x: auto; -webkit-mask-image: none; mask-image: none; padding-right: 0; }
+  .bd-strip .bd-steps { gap: 4px; }
+  .bd-strip .bd-stepli { flex: 1 1 0; min-width: 38px; scroll-snap-align: none; }
+  .bd-strip .bd-binx { flex-direction: column; justify-content: flex-start; align-items: center; gap: 2px; min-height: 72px; padding: 7px 1px 5px; overflow: hidden; }
+  .bd-strip .bd-bin-n { font-size: 1.15rem; }
+  .bd-strip .bd-bin-w { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: normal; max-width: 100%; font-size: .6rem; line-height: 1.15; text-align: center; text-wrap: balance; }
+  .bd-strip .bd-human-w { display: none; }
+}

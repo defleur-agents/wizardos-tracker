@@ -21,6 +21,8 @@
     app_missing: item('movies', 23, named('movies:bump-existing')),
     needs_update: item('wizard-ux', 1445, { switch: 'wizard/agent-inbox' }),
     none: item('wizard-os', 676, {}),
+    other_waits: item('wizard-ux', 1571, { switch: 'wizard/agent-inbox', can_decide: false, decider: 'James', waiting_on: { who: ['James'], kind: 'person' } }),
+    other_waits_no_switch: item('wizard-os', 677, { can_decide: false, decider: 'James', waiting_on: { who: ['James'], kind: 'person' } }),
   };
   const ob = { state: 'yes', text: 'On your Wizard ✓', fix: null, apps: [] };
   for (const [k, i] of Object.entries(cases)) {
@@ -29,7 +31,7 @@
   const out = {};
   for (const [k, i] of Object.entries(cases)) {
     const card = itemCard(i), t = card.querySelector('.bd-act .bd-try');
-    out[k] = { toggle: !!t, grey: !!(t && t.getAttribute('aria-disabled') === 'true'), label: (t && t.textContent) || '',
+    out[k] = { act: !!card.querySelector('.bd-act'), head: (card.querySelector('.bd-waiton') || {}).textContent || '', toggle: !!t, grey: !!(t && t.getAttribute('aria-disabled') === 'true'), label: (t && t.textContent) || '',
       coreSwitch: (t && t.dataset.switch) || '', appSwitch: (t && t.dataset.appSwitch) || '',
       why: [...card.querySelectorAll('.bd-act .bd-why-s')].map(x => x.textContent).join(' | '),
       buttons: [...card.querySelectorAll('.bd-act .bd-mini')].map(x => x.textContent) };
