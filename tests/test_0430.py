@@ -47,7 +47,7 @@ class Steps(unittest.TestCase):
         # 0.44.0: every feature, core and app (James for core repos, the filer for apps)
         self.assertEqual((show['name'], show['role'], show['person'], show['only']), ('Show-and-tell', 'James (core repos) · the filer (apps)', True, None))
         self.assertEqual(show['label'], 'show-and-tell')
-        self.assertIn('the one human step', show['about'])
+        self.assertIn('human step', show['about'])   # 0.46.0: one of two (Pending approval, Show-and-tell)
         self.assertIn('off switch', st[1]['about'])
         self.assertEqual([s for s in st if s.get('person')], [show])   # the only step a person does
         for s in st:
@@ -68,7 +68,7 @@ class Policy(unittest.TestCase):
         self.assertNotIn('7 days', text)
         self.assertIn("the builder's own tester, before merge", text)
         self.assertIn('no person tests anything', text)
-        self.assertIn('Show-and-tell is the only human step', text)
+        self.assertIn('Exactly two human steps: Pending approval', text)   # 0.46.0
         self.assertIn('Features (every repo): built behind an off switch', text)   # 0.44.0
         self.assertIn('app repos -> the person who filed it', text)
         self.assertTrue(any(l.startswith('Bugs (Miguel, 21 Nov)') and 'closed automatically by the builder' in l for l in self.p['lines']))
@@ -89,12 +89,13 @@ class Policy(unittest.TestCase):
         self.assertEqual(r['feature_flow']['app']['person'], 'filer')   # 0.44.0
         self.assertEqual(r['feature_flow']['core']['person'], 'James')
         self.assertEqual(r['feature_flow']['core']['then'], 'show-and-tell')
-        self.assertEqual(r['human_steps'], ['show-and-tell (every feature: James for core repos, the filer for app repos)'])
+        self.assertEqual(r['human_steps'][1:], ['show-and-tell (every feature: James for core repos, the filer for app repos)'])   # 0.46.0
+        self.assertTrue(r['human_steps'][0].startswith('pending approval'))
         self.assertEqual(r['blocked'], {'label': 'builder:blocked', 'only_for': 'real decisions', 'recheck_seconds': 600})
         self.assertEqual(r['core_repos'], ['wizard-os', 'wizard-ux', 'wizard-app-manager', 'wizard-agent-service', 'try-wizard'])
 
     def test_policy_steps_match(self):
-        self.assertEqual([s['key'] for s in self.p['steps']['bugs']], ['open', 'build', 'tester'])
+        self.assertEqual([s['key'] for s in self.p['steps']['bugs']], ['feedback', 'open', 'build', 'tester'])   # 0.46.0: Pending approval first
 
 
 class Tools(unittest.TestCase):

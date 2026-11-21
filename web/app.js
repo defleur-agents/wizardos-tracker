@@ -441,7 +441,7 @@ function render(d) {
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
-  if (goals) return renderGoals(d, keep, order);
+  if (goals) { if (el('human-n')) el('human-n').hidden = true; return renderGoals(d, keep, order); }
   const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
   for (const i of groups.test) i.nextrel = comingNext(i);
   groups.nextrel = groups.test.filter(i => i.nextrel);
@@ -460,6 +460,7 @@ function render(d) {
   // 0.41.0: once the old backlog is approved, Waiting for approval leaves the strip
   if (d.view === 'core' && !(groups.james || []).length && stage[d.view] !== 'james') bins = bins.filter(b => b.key !== 'james');
   strip(d, bins, groups);
+  humanCounts(bins, groups);   // 0.46.0
   flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
@@ -481,8 +482,9 @@ function render(d) {
     const list = groups[g] && groups[g].filter(i => !mineSet.has(i));
     if (!showing(g) || !list || !list.length) continue;
     any = true;
-    const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
+    const s = make('section', 'bd-sec' + (isHuman(g) ? ' bd-human-sec' : '')); s.id = 'sec-' + g;
     const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
+    if (isHuman(g)) { h.classList.add('bd-human'); h.prepend(humanTag()); }   // 0.46.0
     const l = make('div', 'bd-list'); l.replaceChildren(...list.map(g === 'feedback' ? FeedbackStage.card : itemCard));
     s.append(h, l); secs.push(s);
   }
@@ -594,6 +596,48 @@ function saveFilter(kind) {
 // The assembly line: four bins (big number, word + ⓘ, a tiny avg and box-and-whisker), arrows between,
 // and the return arrow under Review → Building labelled with the kick-back rate.
 let steps = null;
+// 0.46.0 (Miguel, 21 Nov): the pipeline has exactly two human steps: Pending approval (Feedback app reports from outside
+// the team, a team member approves or declines) and Show-and-tell (a feature's one yes or no). Everywhere a stage shows
+// (strip, stats, section headers, cards, the item's own line) they wear ONE treatment: a warm tint (--bd-human, the kit
+// warning colour) and a small person icon + 'Human'. Every other step is automatic and stays neutral.
+const HUMAN_STEPS = new Set(['feedback', 'show']);
+const isHuman = k => HUMAN_STEPS.has(k);
+const HUMAN_TIP = 'Human step: a person decides here, so the pipeline waits for them. Every other step is automatic.';
+function humanIcon() {
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
+  const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', '8'); c.setAttribute('cy', '4.6'); c.setAttribute('r', '2.9');
+  const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M2.4 15c0-3.3 2.5-5.6 5.6-5.6s5.6 2.3 5.6 5.6z');
+  svg.append(c, p); return svg;
+}
+function humanTag(word = 'Human') {
+  const t = make('span', 'bd-human-tag'); t.title = HUMAN_TIP;
+  t.append(humanIcon(), make('span', 'bd-human-w', word));
+  return t;
+}
+// the card's step chip: 'Human step · Show-and-tell'
+function humanChip(stepWord) {
+  const t = make('span', 'bd-human-chip'); t.title = HUMAN_TIP;
+  t.append(humanIcon(), make('span', '', 'Human step · ' + stepWord));
+  return t;
+}
+// 0.46.0: the count in each human step, prominent, under the strip: 'Waiting on people · Pending approval 2 · Show-and-tell 5'
+function humanCounts(bins, groups) {
+  const p = el('human-n'); if (!p) return;
+  const hs = bins.filter(x => isHuman(x.key));
+  p.hidden = !hs.length;
+  if (!hs.length) return p.replaceChildren();
+  const parts = [humanTag('Waiting on people')];
+  for (const x of hs) {
+    const lists = x.groups.map(g => groups[g]);
+    const n = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const b = make('button', 'bd-human-c' + (n ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
+    b.append(make('span', 'bd-human-cw', x.word), make('b', 'bd-human-cn', n == null ? '—' : String(n)));
+    b.setAttribute('aria-label', `${x.word} (human step): ${n == null ? 'counting' : n} waiting. Show only ${x.word}`);
+    b.onclick = () => setStage(x.key);
+    parts.push(b);
+  }
+  p.replaceChildren(...parts);
+}
 const arrow = () => {
   const li = make('li', 'bd-arrow'); li.setAttribute('aria-hidden', 'true');
   const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 20 12');
@@ -702,12 +746,13 @@ function flow(d, groups, done, st, hist, bins) {
     if (n) out.push(arrow());
     const lists = x.groups.map(g => groups[g]);
     const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
-    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : ''));
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : '') + (isHuman(x.key) ? ' bd-human' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
     b.setAttribute('aria-pressed', String(only === x.key));
-    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
+    b.setAttribute('aria-label', `${x.word}${isHuman(x.key) ? ' (human step)' : ''}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
+    if (isHuman(x.key)) li.append(humanTag());   // 0.46.0
     li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets, d.view, hist));
     li.onclick = () => setStage(x.key);
     out.push(li);
@@ -732,7 +777,7 @@ function flow(d, groups, done, st, hist, bins) {
     if (!def) { t.hidden = true; t.disabled = true; }
     const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `What happens in ${x.word}?`); info.append(infoIcon());
     const ss = def && ls ? spread(def.xs(hist || [])) : null;
-    info.onclick = () => pop(info, x.word, [STAGE_INFO[x.info || x.key] || x.tip || '', ...(def ? [def.help + '.'] : []), ...statLines(x, ss, target(x.key)),
+    info.onclick = () => pop(info, x.word, [...(isHuman(x.key) ? [HUMAN_TIP] : []), STAGE_INFO[x.info || x.key] || x.tip || '', ...(def ? [def.help + '.'] : []), ...statLines(x, ss, target(x.key)),
       ...(x.key === 'done' && d.since ? [make('span', 'bd-since', sinceText(d.since))] : [])].filter(Boolean));
     c.append(t, info);
     return c;
@@ -801,17 +846,19 @@ function strip(d, bins, groups) {
     if (n) out.push(arrow());
     const lists = x.groups.map(g => groups[g]);
     const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
-    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : ''));
+    const human = isHuman(x.key);   // 0.46.0
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : '') + (human ? ' bd-human' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
     b.setAttribute('aria-pressed', String(only === x.key));
-    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
+    b.setAttribute('aria-label', `${x.word}${human ? ' (human step)' : ''}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
     const w = make('span', 'bd-bin-w', x.word + ' ');
     const info = make('button', 'bd-i bd-i-s'); info.type = 'button'; info.setAttribute('aria-label', 'What happens in ' + x.word); info.append(infoIcon());
-    info.onclick = e => { e.stopPropagation(); pop(info, x.word, STAGE_INFO[x.info || x.key]); };
+    info.onclick = e => { e.stopPropagation(); pop(info, x.word, human ? [HUMAN_TIP, STAGE_INFO[x.info || x.key]] : STAGE_INFO[x.info || x.key]); };
     w.append(info);
     if (x.tip) { li.title = x.tip; b.title = x.tip; }
+    if (human) { li.title = 'Human step · ' + (x.tip || x.word); li.append(humanTag()); }
     li.append(b, w);
     li.onclick = () => setStage(x.key);
     out.push(li);
@@ -1614,7 +1661,9 @@ function checkTag(i) {
   return t;
 }
 function itemCard(i) {
-  const c = make('article', 'bd-card bd-card-calm bd-icard' + (i.nextrel ? ' bd-next' : ''));
+  const human = i.group === 'show' && !i.nextrel;   // 0.46.0: Show-and-tell, a human step
+  const c = make('article', 'bd-card bd-card-calm bd-icard' + (i.nextrel ? ' bd-next' : '') + (human ? ' bd-human-card' : ''));
+  if (human) c.append(humanChip('Show-and-tell'));
   const wh = waitHead(i);
   if (wh) c.append(wh);
   const top = make('div', 'bd-card-top');
@@ -2739,11 +2788,13 @@ function drawStageFlow(f, v) {
     if (n) ol.append(arrow());
     const val = itemStageTime(v, x.key, f);
     const past = val != null || (curAt >= 0 && n < curAt && x.key !== 'answer' && x.key !== 'show');
-    const li = make('li', 'bd-dbin' + (x.key === cur ? ' cur' : '') + (!past && x.key !== cur ? ' dim' : ''));
+    const human = isHuman(x.key);   // 0.46.0
+    const li = make('li', 'bd-dbin' + (x.key === cur ? ' cur' : '') + (!past && x.key !== cur ? ' dim' : '') + (human ? ' bd-human' : ''));
+    if (human) li.append(humanTag());
     li.append(make('span', 'bd-dbin-v', val || '—'), make('span', 'bd-dbin-w', x.word));
     const def = stageStat(v, x.key);
-    li.title = (def ? def.help : x.word) + (x.key === cur ? ' (now)' : '');
-    li.setAttribute('aria-label', `${x.word}: ${val || 'none'}${x.key === cur ? ' (now)' : ''}`);
+    li.title = (human ? 'Human step · ' : '') + (def ? def.help : x.word) + (x.key === cur ? ' (now)' : '');
+    li.setAttribute('aria-label', `${x.word}${human ? ' (human step)' : ''}: ${val || 'none'}${x.key === cur ? ' (now)' : ''}`);
     ol.append(li);
   });
   ol.style.gridTemplateColumns = bins.map(() => 'minmax(0, 1fr)').join(' var(--ga) ');
@@ -3440,13 +3491,15 @@ function renderMe() {
   if (view !== 'me') return;
   for (const id of ['totals', 'filtered']) el(id).textContent = '';
   el('strip').replaceChildren();
+  if (el('human-n')) { el('human-n').hidden = true; el('human-n').replaceChildren(); }
   const secs = [];
   const loading = VIEWS.some(v => !cache[v]);
   const items = meItems();   // 0.45.0: updates stay in the main screen's Update bar and Settings, Feedback on its tabs
   for (const [k, title] of ME_KINDS) {
     const l = items.filter(i => meKind(i) === k); if (!l.length) continue;
-    const s = make('section', 'bd-sec'); s.id = 'sec-me-' + k;
+    const s = make('section', 'bd-sec' + (k === 'approve' ? ' bd-human-sec' : '')); s.id = 'sec-me-' + k;
     const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(l.length)));
+    if (k === 'approve') { h.classList.add('bd-human'); h.prepend(humanTag()); }   // 0.46.0: show-and-tell, a human step
     const list = make('div', 'bd-list'); list.replaceChildren(...l.map(itemCard));
     s.append(h, list); secs.push(s);
   }
@@ -3478,7 +3531,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.45.1';
+const PAGE_VERSION = '0.46.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3561,7 +3614,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.45.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.46.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

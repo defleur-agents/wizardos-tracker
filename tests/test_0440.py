@@ -176,9 +176,9 @@ class Policy(unittest.TestCase):
         self.assertEqual(ff['app']['person'], 'filer')
         self.assertEqual((ff['core']['yes'], ff['app']['yes']), ('switch-default', 'switch-default'))
         self.assertEqual(ff['decide']['mcp'], 'board_decide')
-        self.assertEqual(len(r['human_steps']), 1)
-        self.assertIn('James for core repos', r['human_steps'][0])
-        self.assertIn('the filer for app repos', r['human_steps'][0])
+        self.assertEqual(len(r['human_steps']), 2)   # 0.46.0: Pending approval + Show-and-tell
+        self.assertIn('James for core repos', r['human_steps'][1])
+        self.assertIn('the filer for app repos', r['human_steps'][1])
         text = json.dumps(p)
         self.assertNotIn('No person in the loop', text)
         self.assertNotIn('core-repo features, James)', text)
