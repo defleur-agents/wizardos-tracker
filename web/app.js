@@ -95,7 +95,7 @@ function myTurn(i) {
   if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
   if (i.group === 'test') return false;   // 0.43.0: the builder's tester already tried it; never a person's to-do
   if (i.group === 'show') return !!i.turn;   // 0.44.0: its decider (James for core, the filer for apps)
-  if (i.group === 'james') return !!i.can_james;
+  if (i.group === 'james') return false;   // 0.45.0: no pre-build approval any more
   if (i.group === 'answer') return !!i.turn;   // 0.28: the builder asked you a question
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
   return false;
@@ -762,7 +762,7 @@ const STAGE_INFO = {
   airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (a bug closes, a feature goes to Show-and-tell). Nobody needs to do anything.',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in the reply box on the item (or Approve PR #N when it waits on a pull request): any team member’s reply puts it back in the builder’s queue within 10 minutes.',
   test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs close by themselves; every feature goes to one show-and-tell (James for core repos, the person who filed it for apps). Works / Needs changes stay here as an optional way to send it back to Building.',
-  show: 'One yes or no: James for core-repo features, the person who filed it for app features. Yes: the builder turns it on for everyone and closes it. No: dropped, and the builder removes its switch. It shows at the top for them: Your decisions.',
+  show: 'One yes or no: James for core-repo features, the person who filed it for app features. Approve: the builder turns it on for everyone and closes it. Decline: dropped, and the builder removes its switch. Only the decider sees Approve / Decline (in their Waiting on me); everyone else sees who decides.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
 };
@@ -1834,24 +1834,13 @@ function actionArea(i, inDetail) {
     if (!tg && !inDetail) row.append(...howTo(i));
     return row;
   }
-  if (g === 'james' || (g === 'sorting' && i.sort_approve)) {   // 0.36.5: Approve also while it is being sorted
-    if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), greyBtn('Decline', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
-    const yes = smallBtn('Approve', b => askPop(b, 'Approve this core feature? The builder may start on it.', 'Approve', () => james(i, 'approve', '', b)));
+  // 0.45.0 (Miguel, 21 Nov): no pre-build approval exists any more (policy core_approval_not_needed_since): no buttons
+  if (g === 'show') {   // 0.45.0: Approve / Decline for the decider only; everyone else just sees who decides
+    if (!i.can_decide) { row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return row; }
+    const yes = smallBtn('Approve', b => askPop(b, 'Approve? The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
     yes.classList.add('bd-mini-go');
-    const no = smallBtn('Decline', b => noteAsk(row, 'Why not? (optional)', 'Decline', note => james(i, 'decline', note, b)));
+    const no = smallBtn('Decline', () => noteAsk(row, 'Why not? (optional)', 'Decline', note => decideAct(i, 'no', note)));
     row.append(yes, no); return row;
-  }
-  if (g === 'show') {   // 0.44.0: the decider says Yes / No here too (same as Your decisions); 0.38.3: anyone may press 'James approved' on a core one
-    if (i.can_decide) {
-      const yes = smallBtn('Yes', () => decideNow(i, 'yes', '')); yes.classList.add('bd-mini-go');
-      const no = smallBtn('No', b => noteAsk(row, 'Why not? (optional)', 'No, drop it', note => decideNow(i, 'no', note)));
-      row.append(yes, no); return row;
-    }
-    if (!i.can_james) return null;
-    if (i.switch) { const grp = make('div', 'bd-trygrp'); grp.append(trySwitch(i)); row.append(grp); }
-    const yes = smallBtn('James approved', b => askPop(b, 'James approved it at the show-and-tell? The switch goes away (on for everyone) and it ships.', 'James approved', () => showOk(i, b)));
-    yes.classList.add('bd-mini-go');
-    row.append(yes); return row;
   }
   return null;
 }
@@ -2129,17 +2118,29 @@ async function notDupe(i, b) {
   catch (err) { done(); pop(b, '', err.message); }
   finally { done(); }
 }
-async function james(i, decision, note, b) {
-  const done = decision === 'approve' ? busyOn(b) : () => {};
-  try { await api('api/james', { repo: i.repo, number: i.number, decision, note }); done(); afterAct(i, decision === 'approve' ? 'Approved: the builder may start.' : 'Declined.'); }
-  catch (err) { done(); pop(b, '', err.message); }
-  finally { done(); }
-}
-async function showOk(i, b) {
-  const done = busyOn(b);
-  try { const r = await api('api/show', { repo: i.repo, number: i.number }); done(); afterAct(i, r.switch_default ? 'James approved: the builder turns it on for everyone.' : 'James approved: it’s shipping.'); }
-  catch (err) { done(); pop(b, '', err.message); }
-  finally { done(); }
+// 0.45.0 (Miguel, 21 Nov): Approve / Decline at a show-and-tell (POST api/decide, the decider only). The card leaves
+// every tab and Waiting on me at once and the count drops with it; if GitHub refuses, it comes back with the reason.
+async function decideAct(i, decision, note) {
+  hold(false);
+  const took = [];
+  for (const d of Object.values(cache)) if (d && d.groups) for (const g of Object.keys(d.groups)) {
+    const k = (d.groups[g] || []).findIndex(x => x.id === i.id);
+    if (k >= 0) { took.push([d, g, k, d.groups[g][k]]); d.groups[g].splice(k, 1); if (d.counts) d.counts[g] = d.groups[g].length; }
+  }
+  details.delete(i.id);
+  if (el('detail').open && openId === i.id) WzSheet.close(el('detail'));
+  const paint = () => { if (cache[view]) render(cache[view]); meBadge(); };
+  paint();
+  try {
+    await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined });
+    toast(decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
+    needsBadge();
+    return true;
+  } catch (err) {
+    if (err.status !== 409) for (const [d, g, k, x] of took.reverse()) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = d.groups[g].length; }
+    paint(); say(`Couldn’t save that: ${err.message}`, 'error');
+    return false;
+  }
 }
 // Kept for scripts that call it: the status line in the detail ('On your Wizard ✓' or what to update, and the switch)
 function statusLine(p, t) {
@@ -2307,7 +2308,7 @@ function roles(i) {
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
   if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · built and merged by the builder · For testers, then For everyone with the releases · anyone may check it (optional) · Doesn’t work reopens it`; return; }
-  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell (anyone may press James approved)' : '') + ' · then Shipping until it’s in a release for everyone';
+  r.textContent = `Filed by ${who} · built and tested by the builder · one show-and-tell: ${i.decider || (i.category === 'core' ? 'James' : who)} approves or declines · then Shipping until it’s in a release for everyone`;
 }
 // 0.26.1 (Miguel, 11 Nov): Check it opens a short check card, not the GitHub thread: what changed and how to check
 // it in plain words (the builder's hand-back), Before / After, then Open <app> · Works · Doesn't work. The issue text,
@@ -3395,18 +3396,19 @@ function paintWizards() {
   const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
   if (f) f.scrollIntoView({ block: 'center' });
 }
-// While anything updates, the picture refreshes itself every 5 seconds (Settings open or Waiting on me shown)
+// While anything updates, the picture refreshes itself every 5 seconds (Settings open)
 setInterval(() => {
-  if (document.hidden || !(el('settings').open || view === 'me')) return;
+  if (document.hidden || !el('settings').open) return;
   const busy = draining || [...runs.values()].some(r => r.state === 'running') || (boxUpd && (boxUpd.running || []).length) || ((catalog && catalog.apps) || []).some(busyStatus);
   if (!busy) return;
   catalog = null; loadCatalog(true).then(() => { paintWizards(); selfUpdate(); }).catch(() => {});
 }, 5000);
 
 // ---------- 0.39.0 Waiting on me (Miguel, 18 Nov): one place for everything that waits on the signed-in person ----------
-// Every tab's 'your turn' cards (features to try, builder questions, approvals, show-and-tell, goals needing a status),
-// Feedback reports to approve, and this Wizard's updates (ready, running, queued, failed). The cards are the same cards
-// as on their own tabs, so everything is done right here. Read from the tabs' own loads; no new server route.
+// 0.45.0 (Miguel, 21 Nov: 'pick one'): the ONE place and the ONE count. Three sections only: To approve (show-and-tell
+// items this person decides), Questions for you (builder:blocked naming them), Goals needing a status (James only).
+// The badge is meItems().length, the same rule as the server's api/needs-you (needs_you_split) over the same served
+// board answers. The cards are the tabs' own cards, so Approve / Decline happen right here.
 cache.me = { view: 'me', groups: {} };
 let meTimer = 0;
 function renderMeSoon() { clearTimeout(meTimer); meTimer = setTimeout(() => { if (view === 'me' && !typing() && !document.querySelector('.bd-confirm')) renderMe(); }, 50); }
@@ -3416,23 +3418,19 @@ function meItems() {
     if (i && !seen.has(i.id) && myTurn(i)) { seen.add(i.id); out.push(i); }
   return out;
 }
-const ME_KINDS = [['test', 'To try'], ['answer', 'Questions for you'], ['approve', 'To approve'], ['goals', 'Goals needing a status']];
-const meKind = i => i.group === 'test' ? 'test' : i.group === 'answer' ? 'answer' : i.group === 'james' || i.group === 'show' ? 'approve' : 'goals';
-function meFeedback() { const S = window.FeedbackStage && FeedbackStage._state; return S ? S.items.filter(i => !S.gone.has(i.number)) : []; }
-function meCount() {
-  const apps = (catalog && catalog.apps) || [];
-  return meItems().length + meFeedback().length + apps.filter(a => { const k = appState(a).k; return k === 'ready' || k === 'failed'; }).length + (updates && updates.update_available && !updates.installing ? 1 : 0);
-}
+const ME_KINDS = [['approve', 'To approve'], ['answer', 'Questions for you'], ['goals', 'Goals needing a status']];
+const meKind = i => i.group === 'show' ? 'approve' : i.group === 'answer' ? 'answer' : 'goals';
+function meCount() { return meItems().length; }
 function meBadge() { const n = el('me-n'); if (!n) return; const k = meCount(); n.hidden = !k; n.textContent = k ? String(k) : ''; el('me-btn').title = k ? `Waiting on me: ${k}` : 'Waiting on me'; }
 let meFetched = 0;
 async function loadMe(refresh) {
-  // the 30-second tick asks for a refresh; four tabs from GitHub that often is too much, so at most every 2 minutes
-  if (refresh && Date.now() - meFetched < 120000) refresh = false;
+  // 0.45.0: the server keeps each tab's answer and re-reads GitHub behind it, so the 30-second tick never asks for a
+  // fresh crawl; only Reload ('hard') does, at most every 2 minutes
+  refresh = refresh === 'hard' && Date.now() - meFetched > 120000;
   if (refresh) meFetched = Date.now();
   lastLoad = Date.now(); inflight++; freshness();
   try {
-    await Promise.all([...VIEWS.map(v => api(`api/split?view=${v}${refresh ? '&refresh=1' : ''}`).then(d => { cache[v] = dropPending(d); if (v === 'goals') goalsBadge(); }).catch(() => {})),
-      window.FeedbackStage ? FeedbackStage.load(true) : null, loadCatalog(!!refresh).catch(() => {})]);
+    await Promise.all(VIEWS.map(v => api(`api/split?view=${v}${refresh ? '&refresh=1' : ''}`).then(d => { cache[v] = dropPending(d); if (v === 'goals') goalsBadge(); }).catch(() => {})));
     freshAt = Date.now(); say('');
   } finally { inflight = Math.max(0, inflight - 1); freshness(); }
   if (view === 'me') renderMe(); else meBadge();
@@ -3444,23 +3442,7 @@ function renderMe() {
   el('strip').replaceChildren();
   const secs = [];
   const loading = VIEWS.some(v => !cache[v]);
-  // updates on this Wizard first: they are what lets everything else be tried
-  const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a);
-  const pend = pendingUpdates(), osRun = runs.get('os');
-  const upd = updatesPicture(apps, { skipCurrent: true });
-  if (upd.length || pend.some(x => x.key === 'os') || osRun) {
-    const s = make('section', 'bd-sec bd-me-upd');
-    const h = make('h2', 'bd-sec-h', 'Updates on this Wizard ');
-    const tools = make('span', 'bd-me-tools');
-    if (pend.length) tools.append(smallBtn(`Update all (${pend.length})`, b => { b.setAttribute('aria-disabled', 'true'); queueStart(pendingUpdates()).finally(() => checkSelfUpdate(true)); renderMeSoon(); }));
-    tools.append(smallBtn('All apps', () => openUM()));
-    h.append(tools);
-    s.append(h, make('p', 'bd-meta', updSummary(apps)));
-    if (updates && updates.update_available && !osRun) { const p = make('p', 'bd-onbox no'); p.append(make('b', '', 'WizardOS ' + (updates.installed || '?')), document.createTextNode(updates.installing ? ' · updating now' : ` → ${updates.latest_for_channel || updates.latest} `)); if (!updates.installing) p.append(smallBtn('Update', b => updateWizardOS(b))); s.append(p); }
-    if (osRun) s.append(updPanel(osRun, null));
-    s.append(...upd); secs.push(s);
-  }
-  const items = meItems();
+  const items = meItems();   // 0.45.0: updates stay in the main screen's Update bar and Settings, Feedback on its tabs
   for (const [k, title] of ME_KINDS) {
     const l = items.filter(i => meKind(i) === k); if (!l.length) continue;
     const s = make('section', 'bd-sec'); s.id = 'sec-me-' + k;
@@ -3468,16 +3450,7 @@ function renderMe() {
     const list = make('div', 'bd-list'); list.replaceChildren(...l.map(itemCard));
     s.append(h, list); secs.push(s);
   }
-  const fb = meFeedback();
-  if (fb.length) {
-    const s = make('section', 'bd-sec'); s.id = 'sec-me-feedback';
-    const h = make('h2', 'bd-sec-h', 'Feedback to approve '); h.append(make('span', 'bd-n', String(fb.length)));
-    const list = make('div', 'bd-list'); list.replaceChildren(...fb.map(FeedbackStage.card));
-    s.append(h, list); secs.push(s);
-  }
   el('secs').replaceChildren(...secs);
-  const askOn = items.filter(i => i.group === 'test');
-  if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
   el('empty').hidden = !!secs.length;
   el('empty').textContent = loading ? 'Loading…' : 'Nothing is waiting on you. Nice.';
 }
@@ -3505,7 +3478,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.44.0';
+const PAGE_VERSION = '0.45.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3588,7 +3561,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.44.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.45.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3614,109 +3587,14 @@ async function openLinked() {
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { loadDecisions(); load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
-el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); loadDecisions(true); } };
-
-// ---------- 0.44.0 (Miguel, 21 Nov 2026) Your decisions: the show-and-tell queue is the first thing each person sees ----------
-// Every feature (core and app) ends at one show-and-tell. The signed-in person's own queue (they are its decider: James
-// for core repos, the person who filed it for apps) sits on top as simple cards: title, a two-line pitch, Before/After
-// screenshot links (links, not images: CSP), and two big buttons. Yes / No act at once (No asks for an optional
-// one-line reason first) with a few seconds to Undo; the card goes and the next one shows. Everything else stays below.
-const DECIDE_UNDO_MS = 5000;
-let decideQ = null;          // {count, items} from api/decisions
-let decidePending = null;    // {item, decision, note, timer}
-let decideAsk = null;        // item id whose No reason box is open
-let decideOpen = false;      // 'Show all' (more than the first card)
-async function loadDecisions(refresh) {
-  if (!me || !me.connected) return;
-  try { decideQ = await api('api/decisions' + (refresh ? '?refresh=1' : '')); } catch (_) { return; }
-  drawDecisions();
-}
-function decideShots(i) {
-  const s = make('div', 'bd-shots bd-dec-shots');
-  const add = (kind, urls) => urls.forEach((u, n) => { const a = link('bd-shot wz-button secondary', u); a.textContent = kind + (urls.length > 1 ? ' ' + (n + 1) : '') + ' ↗'; s.append(a); });
-  add('Before', i.before || []); add('After', i.after || []);
-  return s.childNodes.length ? s : null;
-}
-function decideCard(i) {
-  const c = make('article', 'bd-card bd-dec-card'); c.dataset.id = i.id;
-  const meta = make('p', 'bd-dec-meta', `${repoName(i.repo)} · #${i.number}` + (i.opener && i.category === 'app' ? ` · filed by ${i.opener}` : ''));
-  const t = make('a', 'bd-dec-title'); t.href = `#item/${i.repo}/${i.number}`; t.textContent = i.title;
-  c.append(meta, t, make('p', 'bd-dec-pitch', i.pitch || ''));
-  const shots = decideShots(i); if (shots) c.append(shots);
-  if (decideAsk === i.id) {
-    const f = make('form', 'bd-dec-why');
-    const inp = make('input', 'wz-input bd-dec-why-in'); inp.type = 'text'; inp.maxLength = 300; inp.placeholder = 'Why not? (optional)'; inp.setAttribute('aria-label', 'Why not (optional)');
-    const row = make('div', 'bd-dec-btns');
-    const back = make('button', 'wz-button secondary bd-dec-btn', 'Back'); back.type = 'button'; back.onclick = () => { decideAsk = null; drawDecisions(); };
-    const go = make('button', 'wz-button bd-dec-btn bd-dec-no', 'No, drop it'); go.type = 'submit';
-    row.append(back, go); f.append(inp, row);
-    f.onsubmit = e => { e.preventDefault(); decideAsk = null; decideNow(i, 'no', inp.value.trim()); };
-    c.append(f); setTimeout(() => inp.focus(), 0);
-  } else {
-    const row = make('div', 'bd-dec-btns');
-    const no = make('button', 'wz-button secondary bd-dec-btn bd-dec-no', 'No'); no.type = 'button';
-    no.onclick = () => { decideAsk = i.id; drawDecisions(); };
-    const yes = make('button', 'wz-button bd-dec-btn bd-dec-yes', 'Yes'); yes.type = 'button';
-    yes.onclick = () => decideNow(i, 'yes', '');
-    row.append(no, yes); c.append(row);
-  }
-  return c;
-}
-function drawDecisions() {
-  const box = el('decide'); if (!box) return;
-  const items = ((decideQ && decideQ.items) || []).filter(i => !(decidePending && decidePending.item.id === i.id));
-  box.hidden = !items.length && !decidePending;
-  if (box.hidden) { box.replaceChildren(); return; }
-  const h = make('h2', 'bd-sec-h bd-dec-h', 'Your decisions ');
-  h.append(make('span', 'bd-dec-n', items.length ? `${items.length} to decide` : 'All decided'));
-  const out = [h];
-  if (decidePending) {
-    const u = make('div', 'bd-dec-undo'); u.setAttribute('role', 'status');
-    u.append(make('span', '', (decidePending.decision === 'yes' ? 'Yes: ' : 'No: ') + decidePending.item.title));
-    const b = make('button', 'wz-button secondary bd-dec-undo-b', 'Undo'); b.type = 'button'; b.onclick = decideUndo;
-    u.append(b); out.push(u);
-  }
-  const shown = decideOpen ? items : items.slice(0, 1);
-  for (const i of shown) out.push(decideCard(i));
-  if (items.length > 1) {
-    const more = make('button', 'bd-mini bd-dec-more', decideOpen ? 'Show one at a time' : `Show all ${items.length}`); more.type = 'button';
-    more.onclick = () => { decideOpen = !decideOpen; drawDecisions(); };
-    out.push(more);
-  }
-  box.replaceChildren(...out);
-}
-function decideNow(i, decision, note) {
-  if (decidePending) decideSend();   // a second tap sends the first one now
-  decidePending = { item: i, decision, note, timer: setTimeout(decideSend, DECIDE_UNDO_MS) };
-  drawDecisions();
-}
-function decideUndo() {
-  if (!decidePending) return;
-  clearTimeout(decidePending.timer); decidePending = null; drawDecisions();
-}
-async function decideSend() {
-  const p = decidePending; if (!p) return;
-  clearTimeout(p.timer); decidePending = null;
-  if (decideQ) { decideQ.items = decideQ.items.filter(x => x.id !== p.item.id); decideQ.count = decideQ.items.length; }
-  drawDecisions();
-  try {
-    const r = await api('api/decide', { repo: p.item.repo, number: p.item.number, decision: p.decision, note: p.note || undefined });
-    toast(p.decision === 'yes' ? 'Yes: the builder turns it on for everyone.' : 'No: dropped. The builder removes its switch.');
-    if (r && r.saved) setTimeout(() => load(view, true), 1500);
-  } catch (err) {
-    if (decideQ && err.status !== 409) { decideQ.items.unshift(p.item); decideQ.count = decideQ.items.length; }
-    drawDecisions(); say(`Couldn’t save that: ${err.message}`, 'error');
-  }
-}
-window.addEventListener('pagehide', () => { if (decidePending) { const p = decidePending; decidePending = null; fetch('api/decide', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: p.item.repo, number: p.item.number, decision: p.decision, note: p.note || undefined }) }).catch(() => {}); } });
-setInterval(() => { if (quiet() && !decidePending && !decideAsk) loadDecisions(); }, 60000);
+el('reload').onclick = () => { if (!inflight) { load(view, view === 'me' ? 'hard' : true); loadSide(); } };
 
 // ---------- 0.34.0 Needs you badge (switch needs-you-badge, humanitylabs-org/wizardos-tracker#87) ----------
 // The Wizard app badge shows how many items actually wait on the signed-in person (GET api/needs-you: the server's

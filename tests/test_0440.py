@@ -196,15 +196,10 @@ class Policy(unittest.TestCase):
 
 
 class Page(unittest.TestCase):
-    def test_decisions_on_top_and_style_gate(self):
+    def test_decide_on_the_card(self):   # 0.45.0: Your decisions is gone; Approve / Decline on the card call api/decide
         html = (ROOT / 'web' / 'index.html').read_text()
-        self.assertLess(html.index('id="decide"'), html.index('id="lists"'))
-        block = CSS[CSS.index('/* 0.44.0 Your decisions'):]
-        self.assertNotRegex(block, r'#[0-9a-fA-F]{3,8}\b|rgba?\(')
-        self.assertNotRegex(block, r'font-size:\s*[0-9.]+px')
-        self.assertIn("'api/decide'", JS)
-        self.assertIn('to decide', JS)
-        self.assertIn("'Undo'", JS)
+        self.assertNotIn('id="decide"', html)
+        self.assertIn("api('api/decide'", JS)
 
     def test_node_check(self):
         if not shutil.which('node'):

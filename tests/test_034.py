@@ -78,13 +78,12 @@ class CountingRule(Fixture):
         got = self.ids('m')
         u = 'humanitylabs-org/wizard-ux#'
         self.assertEqual(got, {
-            u + '1': 'Approve your idea', u + '2': 'Approve your idea',      # his and his agent's ideas
+            # 0.45.0: no pre-build approval (u1, u2), goals are James's (u40)
             # 0.43.0: features in test (tested by the builder's tester) never count: u4, wizard-notes#30 left out
             u + '7': 'Builder asked you a question',
             'humanitylabs-org/wizard-notes#22': 'Builder asked you a question',
-            'humanitylabs-org/wizard-ux#40': 'Your goal needs a status',
         })
-        for left_out in ('3', '5', '6', '8', '9'):   # James's approval, Jan's review, James's show, Jan's question, building
+        for left_out in ('1', '2', '3', '5', '6', '8', '9', '40'):   # James's approval, Jan's review, James's show, Jan's question, building
             self.assertNotIn(u + left_out, got)
         for shipped in ('20', '21'):                 # shipped bugs wait on nobody
             self.assertNotIn('humanitylabs-org/wizard-notes#' + shipped, got)
@@ -92,16 +91,17 @@ class CountingRule(Fixture):
     def test_james_gets_approvals_and_show(self):
         got = self.ids('j')
         u = 'humanitylabs-org/wizard-ux#'
-        self.assertEqual(got.get(u + '3'), 'Approve your idea')
-        self.assertEqual(got.get(u + '1'), 'Approve this core feature')
-        self.assertEqual(got.get(u + '6'), 'Show-and-tell for you')
+        self.assertNotIn(u + '3', got)                # 0.45.0: no pre-build approval
+        self.assertNotIn(u + '1', got)
+        self.assertEqual(got.get(u + '6'), 'To approve')
+        self.assertEqual(got.get(u + '40'), 'Goal needs a status')   # goals: James only
         self.assertNotIn(u + '4', got)
         self.assertNotIn(u + '7', got)
 
     def test_jan_never_gets_approvals_he_cannot_give(self):
         got = self.ids('n')
         u = 'humanitylabs-org/wizard-ux#'
-        self.assertEqual(set(got), {u + '8', 'humanitylabs-org/wizard-ux#41'})   # 0.43.0: u5 (in test) never counts
+        self.assertEqual(set(got), {u + '8'})   # 0.43.0: u5 (in test) never counts; 0.45.0: his goal #41 waits on James
 
     def test_shape_and_links(self):
         d = S.needs_you('m')
@@ -115,8 +115,8 @@ class CountingRule(Fixture):
         cards = {'james': [{'id': 'a#1', 'turn': True, 'mine': False}, {'id': 'a#2', 'turn': True, 'mine': True}],
                  'test': [{'id': 'a#3', 'turn': True, 'shipped': True}, {'id': 'a#4', 'turn': True}],
                  'show': [{'id': 'a#5', 'turn': True}], 'answer': [{'id': 'a#6', 'turn': False}]}
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#2', 'a#5'])   # 0.44.0: show is its decider's turn
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#1', 'a#2', 'a#5'])
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#5'])   # 0.45.0: no pre-build approval
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#5'])
 
 
 class Switch(Fixture):

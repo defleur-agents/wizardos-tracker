@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.44.0'
+VERSION = '0.45.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -455,11 +455,15 @@ def _tid(token):
     return hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
+_forgot = {}   # 0.45.0: token id -> when its GitHub answers were last dropped (a write); kept boards older than it are re-read
+
+
 def _forget(token):
     t = _tid(token)
     with LOCK:
         for k in [k for k in _cache if k[0] == t]:
             _cache.pop(k, None)
+        _forgot[t] = time.time()
 
 
 # ---------- 0.39.1 GitHub budget guard (James, 18 Nov) ----------
@@ -2940,8 +2944,9 @@ def goal_card(n, login, base):
         card['turn'] = bool(card['can_close'])
         card['turn_why'] = REVIEW_WHY if card['turn'] else ''
     else:
-        card['turn'] = owns and (not st or bool(st.get('stale')))
-        card['turn_why'] = 'Your goal needs a status' if card['turn'] else ''
+        # 0.45.0 (Miguel, 21 Nov): goals are James's; 'Goals needing a status' waits on James only
+        card['turn'] = is_james(login, base) and (not st or bool(st.get('stale')))
+        card['turn_why'] = 'Goal needs a status' if card['turn'] else ''
     return card
 
 
@@ -2984,6 +2989,7 @@ def board_split(person, args):
     with LOCK:
         hidden = {i for (k, i), v in _tested.items() if now - v <= RECENT_SECONDS}
         made = [v for (k, _), v in _made.items() if now - v[0] <= RECENT_SECONDS and v[1] == 'issues']
+    decided = recently_decided(now)
     groups = {g: [] for g in OPEN_GROUPS}
     james, approver = is_james(login, base), is_core_approver(login, base)
     for n in nodes:
@@ -2994,6 +3000,8 @@ def board_split(person, args):
         group = item_group(repo, names, 'open', base, n.get('createdAt'), n.get('body'))
         if group == 'test' and iid in hidden:
             continue
+        if iid in decided:   # 0.45.0: Approved / Declined here; GitHub search still lists the old labels for a while
+            continue
         card = _card(n, 'test' if group in ('test', 'airev', 'show', 'shipping') else 'issues')
         cat = category(repo, names, base)
         extra = {}
@@ -3003,15 +3011,14 @@ def board_split(person, args):
             extra = {'can_review': ok, 'review_rule': rule, 'turn': False}
         elif group == 'airev':
             extra = {'ai_reviewer': ai_reviewers('bug', author, [], base)[1]}
-        elif group == 'james':   # 0.18.2: James or Miguel approve core features; show-and-tell stays James's
-            extra = {'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
+        elif group == 'james':   # 0.18.2 pre-build approval of the old backlog only; 0.45.0: never a turn, no buttons
+            extra = {'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': False}
         elif group == 'show':
             # 0.44.0 (Miguel, 21 Nov): every feature has one decider (James for core repos, the filer for apps); it is their
-            # turn. The old 'James approved' button stays for core cards only (0.38.3: anyone may press it for James).
+            # turn. 0.45.0 (Miguel, 21 Nov): ONLY the decider may Approve / Decline; nobody presses 'James approved' for him.
             dec = show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
-            mine_dec = bool(login) and dec.lower() == person_of(login, base).lower()
-            extra = {'decider': dec, 'can_decide': mine_dec and on_team(login, base), 'can_james': cat == 'core', 'james_rule': '',
-                     'turn': mine_dec}
+            mine_dec = bool(login) and dec.lower() == person_of(login, base).lower() and on_team(login, base)
+            extra = {'decider': dec, 'can_decide': mine_dec, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
             if cat == 'bug':
@@ -3027,7 +3034,9 @@ def board_split(person, args):
             rows_ = [(((c.get('author') or {}).get('login') or ''), c.get('body') or '') for c in (n.get('comments') or {}).get('nodes') or []]
             extra = {'question': q_['question'], 'asked': q_['asked'], 'asked_at': q_['at'],
                      'answered': answered_after(rows_, q_['at'], base)}   # 0.42.0: someone replied; the builder carries on
-            extra['turn'] = bool(q_['asked']) and person_of(login, base) in q_['asked'] and not extra['answered']
+            # 0.45.0: the same person the card names (waiting_on): whoever the question names, else whoever filed it
+            ask_ = q_['asked'] or [person_of(author, base) or author]
+            extra['turn'] = bool(login) and person_of(login, base) in ask_ and not extra['answered']
         if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
             extra['shipped'] = True
             extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
@@ -3060,7 +3069,7 @@ def board_split(person, args):
                 g = ('sorting' if TRIAGE_LABEL in {str(x).lower() for x in it.get('labels') or []}
                      else 'james' if needs_approval(it['repo'], it.get('labels') or [], it.get('created_at') or time.time(), None, base) else 'queued')
                 ok = approver if g == 'james' else False
-                groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
+                groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': False,
                                      'wait_reason': queue_reason(it['repo']) if g == 'queued' else SORTING_NOTE if g == 'sorting' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
                 if g == 'sorting' and needs_approval(it['repo'], it.get('labels') or [], it.get('created_at') or time.time(), None, base):
@@ -3083,6 +3092,82 @@ def board_split(person, args):
             'test': groups['test'], 'doing': [i for g in ('answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting') for i in groups[g]]}
 
 
+# ---------- 0.45.0 (Miguel, 21 Nov): Waiting on me loads in well under 3 s ----------
+# Every tab and the Waiting on me view read the person's board answer from here: kept per (person, view, repos), served
+# at once while under BOARD_STALE seconds old and re-read from GitHub in the background once older than BOARD_FRESH.
+# ?refresh=1 (the Reload button) reads it fresh. Items Approved / Declined here in the last DECIDED_SECONDS are left out
+# of every answer, so a decided card never comes back while GitHub search still lists its old labels.
+BOARD_FRESH, BOARD_STALE, DECIDED_SECONDS = 30, 900, 15 * 60
+_boards = {}
+_boards_busy = set()
+
+
+def recently_decided(now=None):
+    now = time.time() if now is None else now
+    with LOCK:
+        return {k for k, t in _decided.items() if now - t < DECIDED_SECONDS}
+
+
+def _without(d, gone):
+    """A board answer without the cards in `gone` (ids), counts and the older 'test'/'doing' lists kept in step."""
+    if not gone or not isinstance(d, dict) or not isinstance(d.get('groups'), dict):
+        return d
+    groups = {g: [i for i in v if i.get('id') not in gone] for g, v in d['groups'].items()}
+    if all(len(groups[g]) == len(d['groups'][g]) for g in groups):
+        return d
+    out = {**d, 'groups': groups, 'counts': {k: len(v) for k, v in groups.items()},
+           'shown': sum(len(v) for v in groups.values())}
+    for k in ('test', 'doing'):
+        if isinstance(d.get(k), list):
+            out[k] = [i for i in d[k] if i.get('id') not in gone]
+    if 'waiting' in d and d.get('view') != 'goals':
+        out['waiting'] = waiting_summary(groups)
+    return out
+
+
+def _board_key(person, args):
+    return (person_key(person), _view(args), str(args.get('repos') or ''), bool(args.get('with_stats')))
+
+
+def _board_refresh(key, person, args):
+    try:
+        out = board_split(person, args)
+        with LOCK:
+            _boards[key] = (time.time(), out)
+    except Exception:   # noqa: BLE001 - the next page load reads it itself
+        pass
+    finally:
+        with LOCK:
+            _boards_busy.discard(key)
+
+
+def board_served(person, args):
+    """GET /api/split: board_split, kept and served stale-while-revalidate (0.45.0)."""
+    args = dict(args or {})
+    key = _board_key(person, args)
+    now = time.time()
+    tok = ((accounts().get('people') or {}).get(key[0]) or {}).get('token') if key[0] else None
+    with LOCK:
+        hit = None if args.get('refresh') else _boards.get(key)
+        if hit and tok and _forgot.get(_tid(tok), 0) > hit[0]:
+            hit = None   # something was changed through this account since: read it again
+    if hit and now - hit[0] < BOARD_STALE:
+        with LOCK:
+            go = now - hit[0] > BOARD_FRESH and key not in _boards_busy
+            if go:
+                _boards_busy.add(key)
+        if go:
+            threading.Thread(target=_board_refresh, args=(key, person, {**args, 'refresh': False}), daemon=True).start()
+        return _without(hit[1], recently_decided(now))
+    out = board_split(person, args)
+    with LOCK:
+        _boards[key] = (time.time(), out)
+        if len(_boards) > 64:
+            for k in sorted(_boards, key=lambda k: _boards[k][0])[:len(_boards) - 64]:
+                _boards.pop(k, None)
+    return out
+
+
 # ---------- 0.34.0 Needs you badge (Miguel, 15 Nov: "anything that's actually waiting on me ... as a badge") ----------
 # One small, meaningful count from board_split's own 'turn' marks, behind the app switch `needs-you-badge`
 # (humanitylabs-org/wizardos-tracker#87). The page shows it as the Wizard app badge; while the switch is on the server
@@ -3103,11 +3188,9 @@ def needs_you_split(splits):
     """The counting rule over board_split answers (pure; tests feed it fixtures) -> (items, waiting). Per card:
     - test   (Human review): the viewer filed it and it's their turn; shipped bugs have turn False and never count;
     - answer (builder question): asked of the viewer's person;
-    - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
-      Miguel's badge never counts James's approvals of other people's ideas;
-    - show   (show-and-tell): its decider (0.44.0: James for core repos, the person who filed it for app repos);
-    - goals: the viewer owns it and its status is missing or stale; 0.38.0: a goal Pending final review counts for
-      James (who closes goals: 'Goal says it is done: check and close it') and not for its owners.
+    - show   (show-and-tell, 'To approve'): its decider only (James for core repos, the filer for app repos);
+    - goals: James only (0.45.0): a status missing or stale, or Pending final review.
+    0.45.0: the old pre-build core approval ('james') never counts; the page's Waiting on me uses this same rule.
     0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
     release, a question to another person) goes to `waiting` [{id, title, who, what, link}] instead of the count."""
     out, waiting, seen = [], [], set()
@@ -3120,10 +3203,8 @@ def needs_you_split(splits):
                 why = None
                 if g == 'answer' and turn:   # 0.43.0: nothing in test (tested by the builder's tester) counts
                     why = 'Builder asked you a question'
-                elif g == 'james' and turn and (james or mine):
-                    why = 'Approve your idea' if mine else 'Approve this core feature'
                 elif g == 'show' and turn:   # 0.44.0: the card's decider (James for core, the filer for apps)
-                    why = 'Show-and-tell for you'
+                    why = 'To approve'   # 0.45.0: no pre-build approval ('james') counts any more
                 elif g == 'goals' and turn:
                     why = c.get('turn_why') or 'Your goal needs a status'
                 iid = c.get('id')
@@ -3150,13 +3231,11 @@ def needs_you(person, args=None):
     args = args or {}
     key = person_key(person)
     now = time.time()
-    hit = _needs.get(key)
-    if hit and now - hit[0] < NEEDS_SECONDS and not args.get('refresh'):
-        return {**hit[1], 'on': switch_on(NEEDS_SWITCH)}
+    # 0.45.0: the same served board answers the page's Waiting on me reads (board_served), so the badge and the tab agree
     splits, missed = [], []
     for v in NEEDS_VIEWS:
         try:
-            splits.append(board_split(person, {'view': v}))
+            splits.append(board_served(person, {'view': v, 'refresh': bool(args.get('refresh'))}))
         except Problem as e:
             if e.code in (401, 403):
                 raise
@@ -3614,7 +3693,7 @@ STEP_TEXT = {
     'show': ("Every feature, the one human step: one person says yes (the builder turns it on for everyone and closes it) "
              "or no (dropped; the builder removes the switch and its code). Core-repo features: James decides (also his own). "
              "App features: the person who filed it (an agent's filing: its person; filed by the builder: whoever filed the "
-             "item it links, else Miguel). It is the first thing they see in the Tracker: Your decisions."),
+             "item it links, else Miguel). Approve or Decline on its card; it shows only in their Waiting on me."),
     'review': {'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
@@ -3892,7 +3971,7 @@ def policy(person=None):
              "Show-and-tell is the only human step anywhere",
              f"Show-and-tell decider: core repos -> {base['show_deciders']['core']} (also for his own features); app repos -> the "
              f"person who filed it (an agent's filing belongs to its person, team[].agents); filed by the builder -> whoever filed "
-             f"the item it links, else {base['show_deciders']['default']}. Yes/no in Your decisions (top of the Tracker), "
+             f"the item it links, else {base['show_deciders']['default']}. Approve / Decline on its card (the decider's Waiting on me), "
              "POST /api/decide or MCP board_decide (the decider or their agent only)",
              "Duplicates: a new feature that looks like an open feature or bug gets one 'Possible duplicate of' comment and label possible-duplicate; "
              "the builder skips it until a team member comments or taps Not a duplicate",
@@ -4791,6 +4870,10 @@ def show_and_tell(person, args):
     names = _labels(cur)
     if SHOW_LABEL not in names:
         raise Problem(409, 'This is not waiting for show-and-tell. Refresh to see the latest.')
+    # 0.45.0 (Miguel, 21 Nov): things waiting on James wait on James: only the decider (show_decider) may approve
+    decider = show_decider(full, (cur.get('user') or {}).get('login') or '', cur.get('body'), base, _author_lookup(acct))
+    if not on_team(login, base) or person_of(login, base).lower() != decider.lower():
+        raise Problem(403, f'This one is {decider}\u2019s to decide.', 'not_decider')
     rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
     said = [b for w, b in _comment_rows(rows) if w.lower() in BUILDERS]
     sw, how = switch_info(said, cur.get('body'))
@@ -4807,6 +4890,8 @@ def show_and_tell(person, args):
     after = _current(acct, full, number)
     with LOCK:
         _ship.clear()
+        _decided[f'{full}#{number}'] = time.time()
+        _needs.clear()
     return {'id': f'{full}#{number}', 'labels': _labels(after), 'state': after.get('state'), 'switch_default': switched, 'saved': True}
 
 
@@ -5041,6 +5126,15 @@ def decisions(person, args=None, agent=False):
     return {'me': me, 'for': want, 'count': len(mine), 'items': mine, 'counts': counts, 'total': len(items)}
 
 
+def _decide_label(acct, full, number, label):
+    """0.45.0: add one label for Approve / Decline; a GitHub refusal becomes a plain message naming the label and repo."""
+    try:
+        _add_label(acct, full, number, label)
+    except Problem as e:
+        raise Problem(e.code if e.code in (401, 403, 404, 422) else 502,
+                      f'GitHub refused the label \u201c{label}\u201d on {full}#{number}: {e.message}', 'label_refused') from None
+
+
 def decide(person, args, agent=False):
     """POST /api/decide {repo, number | issue, decision yes|no, note?} (MCP board_decide): the show-and-tell yes or no.
     Only the item's decider (show_decider) or that person's agent. Yes: approved + switch-default (the builder turns it
@@ -5051,8 +5145,9 @@ def decide(person, args, agent=False):
     _, acct = account_for(person, agent)
     full, number = _target(args)
     decision = str(args.get('decision') or '').strip().lower()
+    decision = {'approve': 'yes', 'decline': 'no'}.get(decision, decision)   # 0.45.0: the page's words
     if decision not in ('yes', 'no'):
-        raise Problem(400, 'decision must be yes or no.')
+        raise Problem(400, 'decision must be approve or decline (yes or no).')
     raw = args.get('note')
     note = re.sub(r'\s+', ' ', raw).strip()[:300] if isinstance(raw, str) else ''
     login = acct.get('login') or ''
@@ -5073,27 +5168,29 @@ def decide(person, args, agent=False):
     sw, how = switch_info([b for w, b in _comment_rows(rows) if is_builder_login(w, base)], cur.get('body'))
     switched = bool(sw or how)
     if decision == 'yes':
-        # Miguel, 21 Nov: Yes = switch-default (the builder turns it on for everyone and closes it)
+        # Miguel, 21 Nov: Approve = switch-default (the builder turns it on for everyone and closes it)
         body = f'Show-and-tell: yes \u2014 {me} (@{login}{via})' + (f'\n\n{note}' if note else '')
         body += ('\n\nBuilder: turn it on for everyone (remove the switch, keep the switched-on behaviour), merge, then close this issue.'
                  if switched else '\n\nBuilder: it has no switch; make sure it is on for everyone, then close this issue.')
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+        # 0.45.0: the labels first (created when the repo lacks them), so a refusal changes nothing and says why
+        _ensure_label(acct, full, APPROVED_LABEL, '0e8a16', 'Approved in the Tracker')
         _ensure_label(acct, full, DEFAULT_LABEL, '0e8a16', 'Said yes at show-and-tell: the builder turns it on for everyone')
-        _add_label(acct, full, number, APPROVED_LABEL)
-        _add_label(acct, full, number, DEFAULT_LABEL)
+        _decide_label(acct, full, number, APPROVED_LABEL)
+        _decide_label(acct, full, number, DEFAULT_LABEL)
         _drop_label(acct, full, number, SHOW_LABEL)
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
     else:
         body = f'Show-and-tell: no \u2014 {me} (@{login}{via})' + (f'\n\nWhy: {note}' if note else '')
         cleanup = switched
         if cleanup:
             body += ('\n\nBuilder: its code is merged behind its switch. Open a cleanup PR that removes the switch and '
                      'its code (label switch-cleanup; the tick files the cleanup issue).')
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
         _ensure_label(acct, full, DROPPED_LABEL, 'cfd3d7', 'Dropped in the Tracker: not needed')
-        _add_label(acct, full, number, DROPPED_LABEL)
+        _decide_label(acct, full, number, DROPPED_LABEL)
         if cleanup:
             _ensure_label(acct, full, CLEANUP_LABEL, 'c5def5', 'Dropped feature: the builder removes its switch and code')
-            _add_label(acct, full, number, CLEANUP_LABEL)
+            _decide_label(acct, full, number, CLEANUP_LABEL)
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
         for lab in STAGE_LABELS:
             if lab in names:
                 try:
@@ -5104,7 +5201,7 @@ def decide(person, args, agent=False):
     after = _current(acct, full, number)
     now = _labels(after)
     if SHOW_LABEL in now:
-        raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
+        raise Problem(403, f'GitHub did not take the show-and-tell label off {full}#{number} (write access to this repo is needed).')
     with LOCK:
         _decided[f'{full}#{number}'] = time.time()
         _stats.clear()
@@ -5272,7 +5369,8 @@ def sorting_approval(cat, labels, approver):
         return {}
     if JAMES_LABEL in low:
         return {'pre_approved': True}
-    return {'sort_approve': True, 'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
+    # 0.45.0 (Miguel, 21 Nov): no pre-build approval any more: the page offers no buttons and it is nobody's turn
+    return {'sort_approve': True, 'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': False}
 
 
 SORTING_NOTE = 'Sorting… the builder files it in the right place in a minute or two'
@@ -5582,7 +5680,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/detail':
                 return self.send(200, issue_detail(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/split':
-                return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+                return self.send(200, board_served(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/decisions':
                 return self.send(200, decisions(self.person(), {'refresh': q.get('refresh') == '1', 'for': q.get('for')}))
             if path == '/api/needs-you':

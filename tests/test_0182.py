@@ -46,12 +46,16 @@ class Approvers(unittest.TestCase):
             S.james_decide('n', {'repo': 'wizard-ux', 'number': 52, 'decision': 'approve'})
         self.assertEqual((e.exception.code, str(e.exception.message)), (403, 'Only James or Miguel can approve core features.'))
 
-    def test_show_and_tell_anyone_marks_james_approved(self):   # 0.38.3: anyone presses 'James approved' for him
+    def test_show_and_tell_is_james_only(self):   # 0.45.0: nobody presses 'James approved' for him any more
         GH.issues[53] = {'user': 'JanMesaric', 'labels': {'feature', 'james-approved', 'show-and-tell'}, 'comments': []}
-        S.show_and_tell('n', {'repo': 'wizard-ux', 'number': 53})
+        with self.assertRaises(S.Problem) as e:
+            S.show_and_tell('n', {'repo': 'wizard-ux', 'number': 53})
+        self.assertEqual(e.exception.reason, 'not_decider')
+        self.assertIn('show-and-tell', GH.issues[53]['labels'])
+        S.show_and_tell('j', {'repo': 'wizard-ux', 'number': 53})
         self.assertIn('approved', GH.issues[53]['labels'])
         self.assertNotIn('show-and-tell', GH.issues[53]['labels'])
-        self.assertTrue(GH.issues[53]['comments'][-1][1].startswith('Show-and-tell: James approved (marked by @'))
+        self.assertTrue(GH.issues[53]['comments'][-1][1].startswith('Show-and-tell: approved'))
 
 
 class BoardFlags(unittest.TestCase):
@@ -78,16 +82,17 @@ class BoardFlags(unittest.TestCase):
     def test_miguel(self):
         f = self.flags('m')
         self.assertEqual(f[1][:2], ('james', True))
-        self.assertTrue(f[1][3])
-        self.assertEqual(f[2][:2], ('show', True))    # 0.38.3: anyone may press 'James approved'
-        self.assertFalse(f[2][3])                     # ...but it is James's turn, not Miguel's
+        self.assertFalse(f[1][3])                     # 0.45.0: no pre-build approval is anyone's turn
+        self.assertEqual(f[2][:2], ('show', False))   # 0.45.0: nobody presses 'James approved' for him
+        self.assertFalse(f[2][3])                     # it is James's turn, not Miguel's
         self.assertEqual(f[3][0], 'test')
         self.assertTrue(f[3][2])                      # Miguel filed #3: his Human review turn
 
     def test_james(self):
         f = self.flags('j')
         self.assertEqual(f[1][:2], ('james', True))
-        self.assertEqual(f[2][:2], ('show', True))
+        self.assertEqual(f[2][0], 'show')
+        self.assertTrue(f[2][3])                      # 0.45.0: James decides core show-and-tell (Approve / Decline)
 
     def test_jan_greyed_with_reason(self):
         f = self.flags('n')
@@ -109,12 +114,13 @@ class GoalTurn(unittest.TestCase):
 
     def test_owner_needs_status(self):
         base = S.policy_base()
-        self.assertTrue(S.goal_card(self.goal([]), 'JanMesaric', base)['turn'])                   # no status yet
-        self.assertFalse(S.goal_card(self.goal([]), 'jdefleur', base)['turn'])                    # James can, but doesn't own it
+        # 0.45.0 (Miguel, 21 Nov): goals are James's: 'Goals needing a status' waits on James only
+        self.assertFalse(S.goal_card(self.goal([]), 'JanMesaric', base)['turn'])                  # owner: not nagged
+        self.assertTrue(S.goal_card(self.goal([]), 'jdefleur', base)['turn'])                     # no status yet: James
         old = [('JanMesaric', 'Status: green\n\nfine', '2020-01-01T00:00:00Z')]
-        self.assertTrue(S.goal_card(self.goal(old), 'JanMesaric', base)['turn'])                  # status is old
+        self.assertTrue(S.goal_card(self.goal(old), 'jdefleur', base)['turn'])                    # status is old
         fresh = [('JanMesaric', 'Status: green\n\nfine', S.datetime.now(S.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))]
-        self.assertFalse(S.goal_card(self.goal(fresh), 'JanMesaric', base)['turn'])
+        self.assertFalse(S.goal_card(self.goal(fresh), 'jdefleur', base)['turn'])
 
 
 class StillNotWorking(unittest.TestCase):

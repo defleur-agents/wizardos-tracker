@@ -1070,25 +1070,4 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-d-approve .bd-apr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bd-d-approve .bd-apr-t { flex: 1 1 100%; font-size: .85rem; color: var(--ink-2, var(--ink)); overflow-wrap: anywhere; }
 .bd-d-approve .bd-apr-ok { font-weight: 700; color: var(--wz-success, var(--ink)); }
-
-/* 0.44.0 Your decisions: the show-and-tell queue on top (kit cards and buttons; big, thumb-sized Yes / No) */
-.bd-decide { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wz-space-2); margin: 0 0 var(--wz-space-4); }
-.bd-decide > * { min-width: 0; }
-.bd-dec-h { justify-content: space-between; }
-.bd-dec-n { font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--accent); font-size: var(--wz-text-sm); }
-.bd-dec-card { gap: 8px; border-color: color-mix(in srgb, var(--accent) 45%, var(--line-2)); }
-.bd-dec-meta { margin: 0; font-size: .8125rem; color: var(--ink-3); }
-.bd-dec-title { display: block; color: var(--ink); text-decoration: none; font-size: 1.0625rem; font-weight: 700; line-height: 1.3; }
-.bd-dec-title:hover { text-decoration: underline; }
-.bd-dec-pitch { margin: 0; color: var(--ink-2); font-size: .9375rem; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.bd-dec-shots { display: flex; flex-wrap: wrap; gap: 8px; }
-.bd-dec-shots .wz-button { min-height: 36px; font-size: .875rem; }
-.bd-dec-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
-.bd-dec-btn { min-height: 56px; font-size: 1.125rem; font-weight: 700; }
-.bd-dec-no.secondary { color: var(--wz-danger, var(--ink)); }
-.bd-dec-why { display: grid; gap: 10px; }
-.bd-dec-why-in { min-height: 48px; font-size: 1rem; }
-.bd-dec-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: var(--r); background: var(--fill-2); color: var(--ink-2); font-size: .9375rem; }
-.bd-dec-undo span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bd-dec-undo-b { min-height: 40px; flex: none; }
-.bd-dec-more { justify-self: center; }
+.bd-decides { margin-left: 0; }   /* 0.45.0: "James decides" on a show-and-tell card for everyone else */

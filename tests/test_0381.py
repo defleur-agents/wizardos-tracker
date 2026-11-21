@@ -14,7 +14,7 @@ JS = (Path(__file__).resolve().parent.parent / 'web/app.js').read_text()
 
 def block():
     a = JS.index('const pendingChecks = new Set();')
-    b = JS.index('async function james(i, decision, note, b) {')
+    b = JS.index('// 0.45.0 (Miguel, 21 Nov): Approve / Decline at a show-and-tell')
     return JS[a:b]
 
 

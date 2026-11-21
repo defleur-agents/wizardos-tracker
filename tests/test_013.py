@@ -121,6 +121,7 @@ def reset(policy=None, default='tok_miguel_aaaaaaaaaaaaaaaaaaaaaa', login='miste
     S._members.clear()
     S._cache.clear()
     S._device.clear()
+    S._boards.clear()   # 0.45.0: kept board answers
     (Path(DATA) / 'policy.json').write_text(json.dumps(policy or {}))
     S._write('accounts.json', {'people': {'owner': {'token': default, 'login': login}}, 'default': 'owner'})
 

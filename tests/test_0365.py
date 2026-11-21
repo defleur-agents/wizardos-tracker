@@ -7,7 +7,7 @@ import server as S  # noqa: E402
 class SortingApproval(unittest.TestCase):
     def test_core_idea_being_sorted_can_be_approved(self):
         self.assertEqual(S.sorting_approval('core', ['feature', 'triage'], True),
-                         {'sort_approve': True, 'can_james': True, 'james_rule': '', 'turn': True})
+                         {'sort_approve': True, 'can_james': True, 'james_rule': '', 'turn': False})   # 0.45.0: nobody's turn
 
     def test_others_see_it_greyed_with_the_rule(self):
         r = S.sorting_approval('core', ['feature', 'triage'], False)
@@ -24,7 +24,7 @@ class SortingApproval(unittest.TestCase):
 
     def test_page_offers_approve_while_sorting(self):
         js = open(os.path.join(os.path.dirname(__file__), '..', 'web', 'app.js')).read()
-        self.assertIn("(g === 'sorting' && i.sort_approve)", js)
+        self.assertNotIn("(g === 'sorting' && i.sort_approve)", js)   # 0.45.0: no pre-build approval buttons
 
 
 if __name__ == '__main__':
