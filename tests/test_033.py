@@ -78,7 +78,7 @@ class Rendered(unittest.TestCase):
         c = self.out['calendar']
         self.assertTrue(c['toggle'] and not c['grey'], c)
         self.assertNotIn('Settings', c['text'])
-        self.assertTrue(c['steps'].startswith('To test: Switch on Try it, then: in Week'), c['steps'])
+        self.assertTrue(c['steps'].startswith('How to see it: Switch on Try it, then: in Week'), c['steps'])
         self.assertIn('Drag to move and resize', c['detailSwitch'])
         self.assertNotIn('A setting inside the app', c['detailSwitch'])
 

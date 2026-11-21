@@ -19,7 +19,7 @@ def node(*comments, closer='wizardos-builder[bot]'):
 class Swept(unittest.TestCase):
     def test_policy_accept_time_is_seven_days(self):
         flow = S.policy()['builder_rules']['bug_flow']
-        self.assertEqual(flow['auto_accept_seconds'], 7 * 86400)   # builder-tick reads this
+        self.assertIsNone(flow['auto_accept_seconds'])   # 0.43.0: no 7-day wait; builder-tick keeps its own default
         self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 41, 1))
 
     def test_new_sweep_comment_reads_checked_7_days(self):
