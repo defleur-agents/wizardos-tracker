@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.42.0'
+VERSION = '0.43.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2999,7 +2999,8 @@ def board_split(person, args):
         extra = {}
         if group == 'test':
             ok, rule = human_rule('bug', author, [], login, base)
-            extra = {'can_review': ok, 'review_rule': rule, 'turn': ok and same_person(author, login, base)}
+            # 0.43.0: the builder's tester already tried it; Works / Doesn't work stay an optional way to reopen, never a turn
+            extra = {'can_review': ok, 'review_rule': rule, 'turn': False}
         elif group == 'airev':
             extra = {'ai_reviewer': ai_reviewers('bug', author, [], base)[1]}
         elif group == 'james':   # 0.18.2: James or Miguel approve core features; show-and-tell stays James's
@@ -3114,9 +3115,7 @@ def needs_you_split(splits):
             for c in cards or []:
                 turn, mine = bool(c.get('turn')), bool(c.get('mine'))
                 why = None
-                if g == 'test' and turn and not c.get('shipped'):
-                    why = 'Your feature to try'
-                elif g == 'answer' and turn:
+                if g == 'answer' and turn:   # 0.43.0: nothing in test (tested by the builder's tester) counts
                     why = 'Builder asked you a question'
                 elif g == 'james' and turn and (james or mine):
                     why = 'Approve your idea' if mine else 'Approve this core feature'
@@ -3593,13 +3592,23 @@ def _targets(over):
     return out
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once every done-list item is ticked. Nobody else adds or closes a goal.',
-             'features': 'Anyone on the team, or their own agent, opens a feature to try and closes it once they like it.',
-             'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
-    'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
+             'features': 'Anyone on the team, or their own agent, opens a feature. The builder closes it after its tester passed it (core-repo features: after James says yes at the show-and-tell).',
+             'bugs': 'Anyone on the team, or their own agent, opens a bug. The builder closes it after its tester passed the fix.'},
+    'build': {'bugs': 'The WizardOS Builder writes the fix, switched on (no feature switch).',
+              'features': ('The WizardOS Builder writes the change: app features switched on for everyone; core-repo features '
+                           '(wizard-os, wizard-ux, wizard-app-manager, wizard-agent-service, try-wizard) behind an off switch.'),
+              'goals': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.'},
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue (for a goal: that the slice moves its next done-list item forward): pass to Human review, or back to Building.",
-    'review': {'bugs': "Whoever filed it tries it and says Works or Still broken.",
-               'features': "Whoever filed it tries it (with its switch) and says Works or Needs changes.",
-               'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
+    # 0.43.0 (Miguel, 21 Nov 2026): no person tests anything. The builder's independent tester (builder-verify, on its own
+    # machine) tries every change before it merges; there is no AI review after the merge (nothing runs it).
+    'tester': {'bugs': ("The WizardOS Builder's tester tries the fix on its own machine before it merges. Passed: merged switched on "
+                        "and closed automatically. Failed: back to Building. Nobody tests it by hand."),
+               'features': ("The WizardOS Builder's tester tries it on its own machine before it merges. App features: merged switched on "
+                            "for everyone and closed automatically. Core-repo features: merged behind their switch, then Show-and-tell. "
+                            "Failed: back to Building. Nobody tests it by hand.")},
+    'show': ("Core-repo features only, the one human step: James sees it at the show-and-tell and says yes (its switch is "
+             "turned on for everyone and it closes) or no (dropped; the builder removes the switch and its code)."),
+    'review': {'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
 
@@ -3815,13 +3824,31 @@ def steps_for(view, base=None):
     names = ' and '.join(t['name'] for t in openers) or 'Nobody'
     g = base['open']['goals']
     goal_names = 'anyone on the team' if g == 'team' else ' or '.join(t['name'] for t in team if t['name'].lower() in {str(n).lower() for n in g}) or 'James'
-    return [
+    builder_who = [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}]
+    first = [
         {'key': 'open', 'n': 1, 'name': 'Open', 'group': 'queued', 'count_label': 'Queued',
          'role': 'Anyone on the team' if o == 'team' else names, 'who': [_who(t) for t in openers],
          'about': STEP_TEXT['open'][view].format(who=names), 'next': 'It waits in the queue until the builder picks it up.'},
         {'key': 'build', 'n': 2, 'name': 'Build', 'group': 'building', 'label': 'building', 'count_label': 'Building',
-         'role': base['builder']['name'], 'who': [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}],
-         'about': STEP_TEXT['build'], 'next': 'AI review (label ai-review).'},
+         'role': base['builder']['name'], 'who': builder_who,
+         'about': STEP_TEXT['build'][view], 'next': 'AI review (label ai-review).' if view == 'goals' else "The builder's tester tries it before it merges."},
+    ]
+    if view != 'goals':
+        # 0.43.0 (Miguel, 21 Nov 2026): Open -> Building -> Tester -> merged -> closed automatically; core-repo features
+        # add Show-and-tell (James), the only human step. Doesn't work / reopen still sends it back to Building.
+        tester = {'key': 'tester', 'n': 3, 'name': 'Tester', 'group': 'test', 'label': HUMAN_LABEL, 'count_label': 'Tested',
+                  'role': f"{base['builder']['name']}'s tester", 'who': builder_who, 'person': False,
+                  'about': STEP_TEXT['tester'][view],
+                  'next': ('Passed: merged switched on and closed by the builder. Failed: back to Building.' if view == 'bugs'
+                           else 'Passed: merged. App features close automatically; core-repo features go to Show-and-tell. Failed: back to Building.')}
+        out = first + [tester]
+        if view == 'features':
+            out.append({'key': 'show', 'n': 4, 'name': 'Show-and-tell', 'group': 'show', 'label': SHOW_LABEL, 'count_label': 'Show-and-tell',
+                        'role': 'James', 'who': [_who(t) for t in base['team'] if t['name'].lower() == 'james'], 'person': True,
+                        'only': 'core_repos', 'about': STEP_TEXT['show'],
+                        'next': 'Yes: switch-default, on for everyone, closed. No: dropped, then switch-remove cleanup.'})
+        return out
+    return first + [
         {'key': 'ai', 'n': 3, 'name': 'AI review', 'group': 'airev', 'label': 'ai-review', 'count_label': 'AI review',
          'role': "The opener's agent" if view != 'goals' else "The goal owner's agent",
          'who': [{'name': t['name'], 'logins': [{'login': a['login'], 'kind': 'agent', 'name': a['name']} for a in t['agents']]} for t in team if t['agents']],
@@ -3844,12 +3871,20 @@ def policy(person=None):
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: no approval before building when filed since "
-             f"{base['core_approval_not_needed_since']} (older ones: James or Miguel approves first); James says yes or no at the show-and-tell (anyone may mark it James approved)",
+             f"Build: {base['builder']['name']} only · Testing: the builder's own tester, before merge (no person tests anything; "
+             f"no AI review after the merge) · Core features: no approval before building when filed since "
+             f"{base['core_approval_not_needed_since']} (older ones: James or Miguel approves first)",
+             "App features (repos outside core_repos): built switched on for everyone, tested by the builder's tester, merged, "
+             "closed automatically. No person in the loop.",
+             "Core-repo features: built behind an off switch, tested by the builder's tester, merged, then Show-and-tell: James "
+             "says yes (on for everyone, closed) or no (dropped, switch removed). Show-and-tell is the only human step "
+             "(anyone may mark it James approved)",
              "Duplicates: a new feature that looks like an open feature or bug gets one 'Possible duplicate of' comment and label possible-duplicate; "
              "the builder skips it until a team member comments or taps Not a duplicate",
-             "Bugs (Miguel, 10 Nov): merged switched on and shipping before review; AI check, then the filer's check after the fact. "
-             "Doesn't work reopens it to Building. Done once in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work."]
+             "Bugs (Miguel, 21 Nov): Open, Building, tested by the builder's tester before merge, merged switched on, closed "
+             "automatically by the builder. Nobody checks it by hand. Doesn't work or reopening sends it back to Building.",
+             "Goals: human-led by James (unchanged)",
+             "The builder parks only real decisions (builder:blocked) and rechecks them every 10 minutes"]
     login = None
     try:
         _, acct = account_for(person)
@@ -3866,9 +3901,17 @@ def policy(person=None):
                               'skip_labels': [dupes.LABEL],
                               'switch_default_label': DEFAULT_LABEL, 'goal_tag_line': 'Goal: <owner/repo#N> (only on a clear match)',
                               'skip_repos': list(BUILDER_SKIPS),
-                              'bug_flow': {'merge': 'switched on, before any review', 'hand_back': AI_LABEL, 'filer_check': HUMAN_LABEL,
-                                           'auto_accept_seconds': BUG_ACCEPT_SECONDS, 'auto_accept_since': BUG_RULE_SINCE,
-                                           'filer_note': 'Fixed and shipping. Check it when you can'}}, 'editable_file': 'DATA_DIR/policy.json'}
+                              # 0.43.0 (Miguel, 21 Nov 2026): the tester is the only check; the builder closes the bug.
+                              'bug_flow': {'merge': "switched on, after the builder's tester passed it", 'tested_by': 'builder tester (before merge)',
+                                           'hand_back': HUMAN_LABEL, 'closed_by': 'builder', 'filer_check': None, 'ai_review': None,
+                                           'auto_accept_seconds': None, 'reopen': "Doesn't work or reopening sends it back to Building"},
+                              'feature_flow': {'tested_by': 'builder tester (before merge)', 'hand_back': HUMAN_LABEL, 'ai_review': None,
+                                               'app': {'switch': 'on for everyone', 'closed_by': 'builder', 'person': None},
+                                               'core': {'switch': 'off until James says yes', 'then': SHOW_LABEL, 'person': 'James',
+                                                        'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove'}},
+                              'human_steps': ['show-and-tell (core-repo features, James)'],
+                              'blocked': {'label': BLOCKED_LABEL, 'only_for': 'real decisions', 'recheck_seconds': 600}},
+            'editable_file': 'DATA_DIR/policy.json'}
 
 
 # ---------- 0.13: two-step review (AI review, then Human review; optional second human) ----------
@@ -5127,8 +5170,8 @@ ASKED = {'owner_request': {'type': 'string', 'description': "Required: the human
 TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
-    {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
-    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
+    {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed. The builder fixes it switched on, its tester tries the fix before merge, and the builder closes it; nobody tests it by hand.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
+    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. App features (repos outside core_repos) are built switched on for everyone, tried by the builder\'s own tester before merge and closed automatically; core-repo features are built behind an off switch, tested the same way, then James says yes or no at the show-and-tell. Nobody tests by hand. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
     {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where. A feature's answer lists possible_duplicates (open items that look the same) when there are any: tell your person.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
@@ -5140,8 +5183,8 @@ TOOLS = [
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
-    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope (for a goal: that this slice moves its next done-list item forward), then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try (write the steps after 'Human test:'). Bugs and features then get Works / Doesn't work from whoever filed them; core features then go to James's show-and-tell. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
-    {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
+    {'name': 'ai_review_pass', 'description': "AI REVIEW (legacy; agents only). Since 21 Nov 2026 nothing runs this step: the WizardOS Builder's own tester tries every change before it merges and the builder closes bugs and app features itself (core-repo features go to James's show-and-tell, the only human step). Use it only to move an old item still labelled ai-review on: ai-review -> ready-to-test with a short note saying what you checked. Never ask a person to test or try anything. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked (never steps for a person to test).'}}, 'required': ['note']}},
+    {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow. Legacy: nothing runs AI review since 21 Nov 2026 (the builder's tester checks before merge).", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). status: working = In progress, blocked = Blocked, review = Pending final review (the owner thinks it is done; James checks it and closes it or sends it back). The old color field still works (green/yellow = working, red = blocked). text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <status>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'status': {'type': 'string', 'enum': ['working', 'blocked', 'review']}, 'color': {'type': 'string', 'enum': ['working', 'blocked', 'review', 'green', 'yellow', 'red'], 'description': 'Old name for status (green/yellow = working, red = blocked).'}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['text']}},
     {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
@@ -5410,8 +5453,8 @@ from urllib.parse import urlsplit as _sw_urlsplit
 
 SWITCHES = [
     {'id': 'needs-you-badge', 'name': 'Needs you badge',
-     'description': "A number on the Tracker's app badge for what's actually waiting on you (your features to try, "
-                    "builder questions for you, your ideas to approve, your goals' status), and a notification when "
+     'description': "A number on the Tracker's app badge for what's actually waiting on you (builder questions for you, "
+                    "show-and-tell for James, your ideas to approve, your goals' status), and a notification when "
                     "something new waits on you.",
      'default': False, 'issues': ['humanitylabs-org/wizardos-tracker#87']},
 ]

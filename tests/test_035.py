@@ -70,14 +70,10 @@ class NeedsYouWaiting(Fixture035):
     def test_mac_and_phone_items_leave_the_count(self):
         d = S.needs_you('m')
         ids = [i['id'] for i in d['items']]
-        self.assertEqual(ids, [UX + '#1443'])                      # the normal item still counts
-        self.assertEqual(d['count'], 1)
-        w = {i['id']: i for i in d['waiting']}
-        self.assertEqual(w[TW + '#86'], {'id': TW + '#86', 'title': 'Mac icon', 'who': 'James', 'what': 'Mac build',
-                                         'link': '/wizardos-tracker/#item/humanitylabs-org/try-wizard/86'})
-        self.assertEqual((w[UX + '#1276']['who'], w[UX + '#1276']['what']), ('James', 'Android app 0.10.46'))
-        self.assertEqual(w[UX + '#1500']['who'], 'Jan')            # an @-mention of another person with a question
-        self.assertIn('notes box knob', w[UX + '#1500']['what'])
+        # 0.43.0: items tested by the builder's tester are nobody's to-do: none count, none wait
+        self.assertEqual(ids, [])
+        self.assertEqual(d['count'], 0)
+        self.assertEqual(d['waiting'], [])
 
     def test_card_stores_waiting_on(self):
         d = S.board_split('m', {'view': 'core'})
@@ -92,14 +88,14 @@ class NeedsYouWaiting(Fixture035):
         S.phone_latest = lambda token: '0.10.46'
         S.mac_built = lambda token, delivers: True
         d = S.needs_you('m', {'refresh': True})
-        self.assertEqual({i['id'] for i in d['items']}, {TW + '#86', UX + '#1276', UX + '#1443'})
-        self.assertEqual([i['id'] for i in d['waiting']], [UX + '#1500'])
+        self.assertEqual(d['items'], [])   # 0.43.0
+        self.assertEqual(d['waiting'], [])
 
     def test_james_own_mac_item_still_counts_for_him(self):
         items = [dict(ITEMS[0], author={'login': 'jdefleur'})]
         S._view_search = lambda token, view, q, **kw: (items, 1) if view == 'core' else ([], 0)
         d = S.needs_you('j')
-        self.assertEqual([i['id'] for i in d['items']], [TW + '#86'])
+        self.assertEqual([i['id'] for i in d['items']], [])   # 0.43.0
         self.assertEqual(d['waiting'], [])
 
 
@@ -144,9 +140,8 @@ class Rule(unittest.TestCase):
         cards = {'test': [{'id': 'a#1', 'turn': True, 'waiting_on': {'who': ['James'], 'what': 'Mac build'}},
                           {'id': 'a#2', 'turn': True, 'waiting_on': {'who': ['Miguel']}}]}
         items, waiting = S.needs_you_split([{'me_person': 'Miguel', 'groups': cards}])
-        self.assertEqual([i['id'] for i in items], ['a#2'])
-        self.assertEqual(waiting[0]['who'], 'James')
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'me_person': 'Miguel', 'groups': cards}])], ['a#2'])
+        self.assertEqual((items, waiting), ([], []))   # 0.43.0: test cards never count
+        self.assertEqual(S.needs_you_items([{'me_person': 'Miguel', 'groups': cards}]), [])
 
 
 class Page(unittest.TestCase):

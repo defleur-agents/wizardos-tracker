@@ -114,8 +114,8 @@ class Board(unittest.TestCase):
         self.assertTrue(by[2]['can_review'])   # 0.26: anyone on the team checks a bug
         self.assertEqual(by[3]['wait_reason'], 'Oscar builds this one')
         self.assertEqual(by[4]['wait_reason'], 'Next for the builder')
-        self.assertIn('Bugs (Miguel, 10 Nov)', S.policy('m')['lines'][-1])
-        self.assertEqual(S.policy('m')['builder_rules']['bug_flow']['auto_accept_seconds'], 7 * 86400)
+        self.assertTrue(any(l.startswith('Bugs (Miguel, 21 Nov)') for l in S.policy('m')['lines']))   # 0.43.0
+        self.assertIsNone(S.policy('m')['builder_rules']['bug_flow']['auto_accept_seconds'])   # 0.43.0: no 7-day wait
 
     def test_version(self):
         self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 19, 0))
@@ -135,7 +135,7 @@ console.log(JSON.stringify([binsOf('bugs').map(b => b.word), binsOf('apps').map(
   sectionsOf('apps').map(s => s[1]).includes('Filed')]));"""
         bins, apps, filer, queued, filed = self.run_js(src)
         self.assertEqual(bins, ['Queued', 'Building', 'Needs an answer', 'Merged', 'For testers', 'For everyone'])   # 0.26, 0.28
-        self.assertEqual(apps, ['Queued', 'Building', 'Needs an answer', 'AI review', 'Human review', 'Shipping', 'Done'])
+        self.assertEqual(apps, ['Queued', 'Building', 'Needs an answer', 'AI review', 'Tested', 'Shipping', 'Done'])   # 0.43.0
         self.assertEqual(filer, 'Merged · checking releases…')   # 0.25.1: 'Waiting on <who>' is the card's headline (waitHead)
         self.assertEqual(queued, 'Queued · Oscar builds this one')
         self.assertFalse(filed)

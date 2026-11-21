@@ -131,7 +131,7 @@ console.log(JSON.stringify([
         self.assertEqual(got, ['Shipped in For testers 0.3.150', 'Shipped in For testers 0.3.150',
                                'Shipped in For testers 0.3.150', 'Shipped in For everyone 0.3.152',   # 0.26: the check is a tag
                                'Shipped in For testers 0.3.150', 'Shipped in Messenger 0.2.1',
-                               '', ''])
+                               'Tested by the builder · it closes by itself', 'Tested by the builder · it closes by itself'])   # 0.43.0
 
     @unittest.skipUnless(shutil.which('node'), 'node missing')
     def test_bug_strip(self):
@@ -141,7 +141,7 @@ console.log(JSON.stringify([
         self.assertEqual(bins[2]['groups'], ['answer'])   # 0.28
         self.assertEqual(bins[4]['groups'], ['testers'])
         self.assertEqual(bins[5]['groups'], ['done'])
-        self.assertIn("const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';", JS)
+        self.assertIn("const HUMAN_CHECK_TIP = 'Tried by the builder’s tester before it merged. Nobody checks it by hand; Still broken sends it back to Building.';", JS)   # 0.43.0
 
     def test_checked_of(self):
         reset()
@@ -173,7 +173,7 @@ const apps = { test: [it(6, 'test', true)], queued: [it(7, 'queued')], building:
 const lift = (v, g) => sectionsOf(v).filter(([k]) => k !== 'done' && g[k]).flatMap(([k]) => g[k].filter(myTurn)).map(i => i.number);
 console.log(JSON.stringify([lift('bugs', bugs), lift('apps', apps)]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(got, [[], [6]])   # 0.26: a shipped bug's check never waits on anyone
+        self.assertEqual(got, [[], []])   # 0.26: a shipped bug's check never waits on anyone; 0.43.0: nor an app feature's
 
 
 class Form(unittest.TestCase):

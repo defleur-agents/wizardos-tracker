@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.42.0
+version: 0.43.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -23,7 +23,16 @@ Goals (own header button; its number = all open goals) | Core features | App fea
 
 Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`), James/Archimedes (`jdefleur`, `defleur-agents`), DeFleur agents, Jan (`JanMesaric`), Robert/Nebula (`hacalastudio`). A person and their own agent count as one person. Roster: `GET /api/policy`.
 
-## Flows (agreed with James, 9 Nov)
+## Flows (Miguel, 21 Nov 2026: no person tests anything; this overrides the older notes below)
+- **The builder's tester is the only check.** The WizardOS Builder's independent tester (builder-verify, on its own machine) tries every change before it merges. There is no AI review after the merge (nothing runs it). Never ask a person to test, try or check something, and never write 'Human test:' steps.
+- **Bugs**: Open → Building → tested by the builder's tester → merged switched on → closed automatically by the builder. Doesn't work / Still broken or reopening sends it back to Building.
+- **App features** (any repo not in `/api/policy` `core_repos`): no person in the loop. Built switched on for everyone, tester, merge, closed automatically.
+- **Core-repo features** (wizard-os, wizard-ux, wizard-app-manager, wizard-agent-service, try-wizard): built behind an off switch, tester, merge, then label `show-and-tell`: James says yes (`switch-default`, on for everyone, closes) or no (dropped, `switch-remove` cleanup). Show-and-tell is the only human step in the pipeline.
+- **Goals**: unchanged, human-led by James.
+- The builder parks only real decisions (`builder:blocked`) and rechecks them every 10 minutes.
+- Works / Needs changes / Still broken stay in the Tracker as an optional way for anyone on the team to send something back; they are never a step someone must do, and tested items never count as anyone's turn.
+
+## Flows (agreed with James, 9 Nov; superseded where 21 Nov says otherwise)
 - **Bugs** (0.20, Miguel: shipping never waits on humans): Queued → Building → **Shipped** (merged switched on, in For testers within minutes; AI check by the filer's agent) → **Human check** (the filer's quick sanity check, any time after Shipped; never holds up shipping) → **Checked** (said Works, or 7 days with no Doesn't work: 'Checked (no problems in 7 days)'; the builder's bug sweep closes those as completed every 30 minutes, once a merged fix on the default branch names the bug). Cards show release and check apart: 'Shipped in For testers 0.3.150 · Human check pending' / 'Shipped in For everyone 0.3.152 · Checked by Miguel'. Doesn't work at any point (also after it closed) reopens it to Building. Promotion to For everyone never waits on a bug's human check. Hotfix: the same, plus the front of the queue.
 - **App features**: Queued → Building → AI review → Human review by the filer (with its switch) → Shipping → Done. No James step. Works on one with a switch adds `switch-default` (0.26.4): the builder removes the switch (always on), hands back with `Switch: none`, and the AI review pass closes it.
 - **Core features** (0.41.0): filed since `/api/policy` `core_approval_not_needed_since` → Queued → Building, no approval; James's show-and-tell is the one yes or no. Older ones, as before: Queued → **Waiting for approval** (0.18.2, wizard-os#423: **James or Miguel** approves — policy `core_approvers`; the builder must not start until the issue has label `james-approved`; Approve / Decline, Decline closes it as not planned; others see 'Only James or Miguel can approve core features.') → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves — since 0.38.3 any team member may press **James approved** on his behalf after his OK in the session (`POST /api/show`), the comment names who pressed it: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
@@ -52,7 +61,7 @@ Reports sent from the Feedback app by people outside the team (or not signed in)
 Each goal card shows its status — **In progress** (neutral), **Blocked** (red) or **Pending final review** (the owner thinks it's done) — with a one-or-two-sentence human status, who wrote it and when; older than 7 days shows "Status is old". There is no 'on track': the point of a goal is to close it, so when the owner thinks it's done they set **Pending final review**; that goal then waits on James (Your turn first and Needs you: "Goal says it is done: check and close it"), who closes it or sends it back with a new status, and its owners are no longer nagged about an old status. A status is a **GitHub comment on the goal whose first line is `Status: working|blocked|review`**, then the text; the comment thread is the history (old `Status: green|yellow` comments read as In progress, `red` as Blocked). Post with `goal_status_set {repo, number, status, text}` (`status`: `working`, `blocked` or `review`; the old `color` field still works, green/yellow = working, red = blocked; only for the goal's owners or James; as an agent, only when your person is one of them and asked you); read with `goal_status_get`. Never post a status the owner didn't give you.
 Linked bugs/features: the builder adds one line `Goal: owner/repo#N` to an item's body or hand-over comment **only on a clear match**; the goal card counts linked items by stage.
 
-Oscar's box runs a 30-minute cron doing its own AI reviews: re-read the item (`board_get`) right before reviewing so you don't double-review.
+AI review is legacy since 21 Nov 2026 (nothing runs it; the builder's tester checks before merge). `ai_review_pass` only moves an old `ai-review` item on; re-read it (`board_get`) first.
 
 ## Same screen for everyone
 Every person sees the exact same UI: the same tabs, lists, items, buttons and switches. Nothing is hidden or added per person; anything a viewer can't do is greyed out with the reason in place ("Only James closes a goal.", "Only Miguel tests this: they filed it.", "Only Jan or James review this goal."). Human review lists your own items too. Keep it that way in every change.

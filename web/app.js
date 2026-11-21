@@ -58,11 +58,13 @@ const BINS = [
   { key: 'review', group: 'test', word: 'Human review' },
   { key: 'done', group: null, word: 'Done' },
 ];
+// 0.43.0 (Miguel, 21 Nov 2026): no person tests anything. The builder's own tester tries every change before it merges;
+// bugs and app features then close by themselves; core-repo features go to James's show-and-tell (the only human step).
 const POP = {
-  build: ['WizardOS Builder', 'Writes the code, then hands it to Review.'],
+  build: ['WizardOS Builder', 'Writes the code; its own tester tries it before it merges.'],
   ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
-  review: ['The team, not whoever opened it', 'Someone else tries it: Works, or back to Building.'],
-  done: ['Closed', 'The opener closes it once it works. Only James closes a goal, once its done-list is ticked.'],
+  review: ['WizardOS Builder’s tester', 'Tried by the builder’s tester before it merged. Nobody tests it by hand; Doesn’t work still sends it back to Building.'],
+  done: ['Closed', 'The builder closes bugs and app features once its tester passed them; core-repo features close after James says yes at the show-and-tell. Only James closes a goal, once its done-list is ticked.'],
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
@@ -91,7 +93,7 @@ const SORT_FN = {
 function myTurn(i) {
   if (!i || i.closed_at || i.state === 'closed') return false;
   if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
-  if (i.group === 'test') return !!i.can_review && !i.nextrel;
+  if (i.group === 'test') return false;   // 0.43.0: the builder's tester already tried it; never a person's to-do
   if (i.group === 'james' || i.group === 'show') return !!i.can_james;
   if (i.group === 'answer') return !!i.turn;   // 0.28: the builder asked you a question
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
@@ -616,7 +618,7 @@ function stageStat(v, key) {
     building: { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
     answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
     airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
-    test: { t: 'review', help: 'Human review: ready to try → Works or Needs changes', xs: l => l.flatMap(i => i.review_rounds || []) },
+    test: { t: 'review', help: 'Tested: the builder’s tester passed it → closed (or Show-and-tell)', xs: l => l.flatMap(i => i.review_rounds || []) },
     show: { t: 'show', help: 'Show-and-tell: Works → James approves', xs: l => l.flatMap(i => i.show_rounds || []) },
     shipping: { t: 'shipping', help: 'Shipping: closed → in a release for everyone', xs: l => l.map(i => gap(i.closed_at, i.everyone_at)) },
     relwait: { t: 'relwait', help: 'Merged: fix merged → in For testers', xs: l => l.map(i => gap(i.handoff_at, i.testers_at)) },
@@ -742,21 +744,21 @@ function flow(d, groups, done, st, hist, bins) {
 }
 
 // 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
-const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';
+const HUMAN_CHECK_TIP = 'Tried by the builder’s tester before it merged. Nobody checks it by hand; Still broken sends it back to Building.';   // 0.43.0
 const STAGE_INFO = {
   queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
   shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Still broken, at any point, sends it back to Building.',
-  humancheck: 'A quick sanity check by whoever filed it. It never holds up shipping. They can do it any time after Shipped, even while it is still in For testers: Works, or Still broken (back to Building).',
-  relwait: 'The fix is merged and switched on, waiting for the next release. Anyone on the team may check it any time: Works tags it Checked, Still broken sends it back to Building.',
-  testers: 'The fix is in the For testers release. Checking it is optional and never holds it up: tap Check it, look, then Works (tags it Checked by you) or Still broken (back to Building, kept out of Stable).',
+  humancheck: 'No person checks it (Miguel, 21 Nov): the builder’s tester tried the fix before it merged, and the builder closes it. Still broken, any time, sends it back to Building.',
+  relwait: 'The builder’s tester tried the fix before it merged; it is merged switched on, waiting for the next release, and the builder closes it. Nobody checks it by hand. Still broken, any time, sends it back to Building.',
+  testers: 'The fix is in the For testers release. The builder’s tester already tried it before it merged; nobody checks it by hand. Still broken, any time, sends it back to Building (kept out of Stable).',
   everyone: 'The fix reached everyone: the Stable WizardOS release, or the app’s Store release. A Checked tag says who looked at it and when.',
   checked: 'Whoever filed it said Works, or 7 days passed with no Still broken: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'Older core features only: James or Miguel approves before the builder starts. New ones go straight to the builder.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Waiting for the WizardOS Builder to start. It then moves to Building.',
-  airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
+  airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (closed, or Show-and-tell for a core feature). Nobody needs to do anything.',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in the reply box on the item (or Approve PR #N when it waits on a pull request): any team member’s reply puts it back in the builder’s queue within 10 minutes.',
-  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Needs changes (with what should change). Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
+  test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs and app features close by themselves; a core-repo feature goes to James’s show-and-tell. Works / Needs changes stay here as an optional way to send it back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
@@ -764,7 +766,7 @@ const STAGE_INFO = {
 function binsOf(v) {
   // 0.28 (Miguel, 11 Nov): Needs an answer: builder:blocked items, a person's turn like Human review, right after Building
   const ASK = { key: 'answer', word: 'Needs an answer', groups: ['answer'], tip: 'The builder asked a question and paused' };
-  const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test', 'nextrel'] }];
+  const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Tested', groups: ['test', 'nextrel'], tip: 'Tried by the builder’s tester before merge' }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   // 0.41.0 (Miguel, 20 Nov): new core features need no approval; Waiting for approval holds only the older backlog
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'Older core features: James or Miguel approves' },
@@ -785,7 +787,7 @@ function binsOf(v) {
 function sectionsOf(v) {
   if (v === 'bugs') return [['answer', 'Needs an answer'], ['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
-  return [['test', 'Human review'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
+  return [['test', 'Tested by the builder'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
@@ -1556,9 +1558,10 @@ function whereLine(i) {
   if (i.nextrel) return [nextLine(i), ''];
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
-  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? [firstLine(ob.fix) + ', then check it', ''] : ['', '']; }
+  // 0.43.0: tested by the builder's tester before merge; nobody has to check it
+  if (g === 'test') return [i.category === 'core' ? 'Tested by the builder · next: James’s show-and-tell' : 'Tested by the builder · it closes by itself', ''];
   if (g === 'show' || g === 'james') return ['', ''];
-  if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
+  if (g === 'airev') return ['Older hand-back · the builder moves it on', ''];
   if (g === 'answer' && i.answered) return ['Answered · back to the builder within 10 minutes', ''];   // 0.42.0
   if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
   if (g === 'building') return ['The builder is on it', ''];
@@ -1571,7 +1574,8 @@ function whereLine(i) {
 }
 // 0.25.1 (Miguel, 11 Nov): the headline of every card that waits on someone: 'Waiting on <name>', the person or
 // agent named, never a vague 'Your turn'. AI review names the agent (or the agents that may do it).
-const WAIT_WHAT = { answer: 'to answer the builder', test: 'to check it', james: 'to approve or decline', show: 'for show-and-tell', airev: 'AI review' };
+// 0.43.0: Tested (test) and old AI review items wait on nobody: the builder closes or moves them on
+const WAIT_WHAT = { answer: 'to answer the builder', james: 'to approve or decline', show: 'for show-and-tell' };
 function waitHead(i) {
   if (i.nextrel) return null;
   const g = i.group, wo = i.waiting_on || {};
@@ -1760,7 +1764,7 @@ function actionArea(i, inDetail) {
     if (run) row.append(updPanel(run, i));
     else if (ob && ob.state === 'no' && /^Update /.test(ob.fix || '')) row.append(...blockerBits(i, { ob }, firstLine(ob.fix)));
     if (i.fix && i.fix.dev && !inDetail) { row.append(make('span', 'bd-why-s', 'Behind the scenes: nothing to see by hand'), moreBtn(i, false)); return row; }
-    if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true)), moreBtn(i, false)); return row; }
+    if (!inDetail) { row.append(smallBtn('Details', () => openDetail(i, true)), moreBtn(i, false)); return row; }   // 0.43.0: not a to-do
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
     // 0.36.6 (wizardos-tracker issue 103): Works is the one way to finish a check: it tags Checked by you and closes it
@@ -2338,7 +2342,7 @@ function openDetail(i, toAct) {
   if (inReview && !i.nextrel) onboxLine(el('d-onbox'), i);
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
-  if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(tryState(i).has ? stepsAfterToggle(i) : i.steps) : i.check || '';
+  if (inReview) el('d-steps').textContent = i.steps ? 'How to see it: ' + cap(tryState(i).has ? stepsAfterToggle(i) : i.steps) : i.check || '';
   el('d-steps').classList.remove('bd-chkcard'); checkMode(false);
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
@@ -3492,7 +3496,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.42.0';
+const PAGE_VERSION = '0.43.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3575,7 +3579,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.42.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.43.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

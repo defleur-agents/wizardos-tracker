@@ -79,8 +79,7 @@ class CountingRule(Fixture):
         u = 'humanitylabs-org/wizard-ux#'
         self.assertEqual(got, {
             u + '1': 'Approve your idea', u + '2': 'Approve your idea',      # his and his agent's ideas
-            u + '4': 'Your feature to try',
-            'humanitylabs-org/wizard-notes#30': 'Your feature to try',       # filed by Oscar = Miguel
+            # 0.43.0: features in test (tested by the builder's tester) never count: u4, wizard-notes#30 left out
             u + '7': 'Builder asked you a question',
             'humanitylabs-org/wizard-notes#22': 'Builder asked you a question',
             'humanitylabs-org/wizard-ux#40': 'Your goal needs a status',
@@ -102,7 +101,7 @@ class CountingRule(Fixture):
     def test_jan_never_gets_approvals_he_cannot_give(self):
         got = self.ids('n')
         u = 'humanitylabs-org/wizard-ux#'
-        self.assertEqual(set(got), {u + '5', u + '8', 'humanitylabs-org/wizard-ux#41'})
+        self.assertEqual(set(got), {u + '8', 'humanitylabs-org/wizard-ux#41'})   # 0.43.0: u5 (in test) never counts
 
     def test_shape_and_links(self):
         d = S.needs_you('m')
@@ -116,8 +115,8 @@ class CountingRule(Fixture):
         cards = {'james': [{'id': 'a#1', 'turn': True, 'mine': False}, {'id': 'a#2', 'turn': True, 'mine': True}],
                  'test': [{'id': 'a#3', 'turn': True, 'shipped': True}, {'id': 'a#4', 'turn': True}],
                  'show': [{'id': 'a#5', 'turn': True}], 'answer': [{'id': 'a#6', 'turn': False}]}
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#2', 'a#4'])
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#1', 'a#2', 'a#4', 'a#5'])
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#2'])   # 0.43.0
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#1', 'a#2', 'a#5'])
 
 
 class Switch(Fixture):
