@@ -97,9 +97,10 @@ class Turn(unittest.TestCase):
     def test_working_and_blocked_unchanged(self):
         base = S.policy_base()
         for st in ('working', 'blocked', 'green', 'red'):
-            self.assertTrue(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', OLD)]), 'JanMesaric', base)['turn'])
-            self.assertFalse(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', NOW)]), 'JanMesaric', base)['turn'])
-            self.assertFalse(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', OLD)]), 'jdefleur', base)['turn'])
+            # 0.45.0: a stale status waits on James only (goals are his), never on the owner
+            self.assertTrue(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', OLD)]), 'jdefleur', base)['turn'])
+            self.assertFalse(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', NOW)]), 'jdefleur', base)['turn'])
+            self.assertFalse(S.goal_card(goal([('JanMesaric', f'Status: {st}\n\nx', OLD)]), 'JanMesaric', base)['turn'])
 
 
 class NeedsYou(Fixture):

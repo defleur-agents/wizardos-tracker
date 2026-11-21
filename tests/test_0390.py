@@ -49,9 +49,10 @@ class WaitingOnMe(unittest.TestCase):
         html = (ROOT / 'web/index.html').read_text()
         self.assertIn('id="me-btn" data-view="me"', html)
         self.assertIn("if (which === 'me') return loadMe(refresh);", JS)
-        for k in ("['test', 'To try']", "['answer', 'Questions for you']", "['approve', 'To approve']",
-                  "'Feedback to approve '", "'Updates on this Wizard '"):
+        for k in ("['answer', 'Questions for you']", "['approve', 'To approve']", "['goals', 'Goals needing a status']"):
             self.assertIn(k, JS)
+        for k in ("['test', 'To try']", "'Feedback to approve '", "'Updates on this Wizard '"):   # 0.45.0: one place, one count
+            self.assertNotIn(k, JS)
 
     def test_default_view_is_waiting_on_me(self):
         self.assertIn("return VIEWS.includes(v) || v === 'me' ? v : 'me'; } catch (_) { return 'me'; }", JS)
