@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.46.1'
+VERSION = '0.47.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1679,6 +1679,121 @@ def avatar(person):
     return data, kind
 
 
+# ---------- 0.47.0 (Miguel, 21 Nov): show-and-tell screenshots, shown in the Tracker ----------
+# The builder's Before / After links point into private repos of the team's org, so the page cannot load them itself.
+# GET /api/shot?u=<link> fetches one with the signed-in person's own GitHub token and serves the picture. It is not a
+# proxy for anything else: only these three link forms, only the team's org, only real pictures, and no redirects.
+#   https://raw.githubusercontent.com/<org>/<repo>/<ref>/<path>        (<ref> may contain a slash)
+#   https://github.com/<org>/<repo>/blob/<ref>/<path>                  (with or without ?raw=true)
+_SHOT_PART = r'(?:[A-Za-z0-9._~+@,=-]|%20)+'
+_SHOT_REST = rf'(?P<rest>{_SHOT_PART}(?:/{_SHOT_PART})+)'
+SHOT_URLS = (re.compile(rf'https://raw\.githubusercontent\.com/(?P<owner>[A-Za-z0-9-]+)/(?P<repo>[A-Za-z0-9._-]+)/{_SHOT_REST}'),
+             re.compile(rf'https://github\.com/(?P<owner>[A-Za-z0-9-]+)/(?P<repo>[A-Za-z0-9._-]+)/blob/{_SHOT_REST}(?:\?raw=true)?'))
+SHOT_EXT = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
+SHOT_MAX = 5 * 1024 * 1024     # bytes, one picture
+SHOT_KEEP = 300                # pictures kept on disk (DATA_DIR/private/shots); the oldest go first
+SHOT_MISS_SECONDS = 300        # a picture GitHub did not give is not asked for again for this long
+_shot_miss = {}
+_shot_gate = threading.BoundedSemaphore(4)
+
+
+def shot_source(url):
+    """The raw.githubusercontent.com address of a screenshot link the Tracker may show, else None."""
+    if not isinstance(url, str) or len(url) > 600 or '..' in url or not TEAM_ORG:
+        return None
+    for rx in SHOT_URLS:
+        m = rx.fullmatch(url)
+        if not m or m['owner'].lower() != TEAM_ORG.lower() or not m['rest'].lower().endswith(SHOT_EXT):
+            continue
+        if any(not part.strip('.') for part in [m['repo'], *m['rest'].split('/')]):
+            return None
+        return f"https://raw.githubusercontent.com/{TEAM_ORG}/{m['repo']}/{m['rest']}"
+    return None
+
+
+def shot_kind(data):
+    """The picture type by its first bytes (PNG, JPEG, GIF, WebP), else None."""
+    data = data or b''
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if data[:6] in (b'GIF87a', b'GIF89a'):
+        return 'image/gif'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):   # the token never follows a redirect to another host
+        return None
+
+
+_shot_open = urllib.request.build_opener(_NoRedirect).open
+
+
+def _shot_get(raw, token):
+    """One GET of a raw.githubusercontent.com address with the person's token (at most SHOT_MAX + 1 bytes)."""
+    req = urllib.request.Request(raw, headers={'Authorization': 'token ' + token, 'User-Agent': USER_AGENT})
+    with _shot_gate, _shot_open(req, timeout=20) as r:
+        return r.read(SHOT_MAX + 1)
+
+
+def _shot_keep(f, data):
+    """Keep one picture on disk (0600, atomically); over SHOT_KEEP files the oldest go."""
+    try:
+        _private()
+        f.parent.mkdir(exist_ok=True)
+        os.chmod(f.parent, 0o700)
+        tmp = f.with_name(f.name + '.' + secrets.token_hex(4) + '.tmp')
+        tmp.write_bytes(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, f)
+        kept = sorted((x for x in f.parent.iterdir() if x.is_file() and x != f), key=lambda x: x.stat().st_mtime_ns)
+        for old in kept[:max(0, len(kept) + 1 - SHOT_KEEP)]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass   # the picture is still served; it is fetched again next time
+
+
+def shot(person, url):
+    """GET /api/shot?u=<link> -> (bytes, content type): one Before / After screenshot of the team's org, fetched with
+    the signed-in person's GitHub token and kept on the box (everyone signed in here is on the team). 400: not one of
+    the link forms above. 404: no picture there (or not a PNG, JPEG, GIF or WebP, or over 5 MB)."""
+    _, acct = account_for(person)
+    raw = shot_source(url)
+    if not raw:
+        raise Problem(400, 'Not a screenshot link.')
+    f = PRIVATE / 'shots' / hashlib.sha256(raw.encode()).hexdigest()
+    try:
+        data = f.read_bytes()
+        os.utime(f)
+    except OSError:
+        data = None
+    if data is None:
+        token = _renamed.get(_tid(acct['token']), acct['token'])
+        miss, now = (_tid(token), raw), time.time()
+        with LOCK:
+            if now - _shot_miss.get(miss, 0) < SHOT_MISS_SECONDS:
+                raise Problem(404, 'Not found.')
+        try:
+            data = _shot_get(raw, token)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            data = b''
+        if not shot_kind(data) or len(data) > SHOT_MAX:
+            with LOCK:
+                if len(_shot_miss) > 2000:
+                    _shot_miss.clear()
+                _shot_miss[miss] = now
+            raise Problem(404, 'Not found.')
+        _shot_keep(f, data)
+    kind = shot_kind(data)
+    if not kind:
+        raise Problem(404, 'Not found.')
+    return data, kind
+
+
 
 # ---------- the three tabs (Goals, To test, Issues) ----------
 
@@ -2978,7 +3093,7 @@ def board_split(person, args):
         kept = [n for n in nodes if view_keeps(view, n['repository']['nameWithOwner'], base)]
         total = len(kept) if total <= len(nodes) else total
         nodes = kept
-    full, _ = _view_search(acct['token'], view, q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=80)
+    full, _ = _view_search(acct['token'], view, q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=200)
     if any(BLOCKED_LABEL in {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []} for n in nodes):
         # 0.28: Needs an answer cards show the builder's question and whom it asked: they need its comments too
         asks, _ = _view_search(acct['token'], view, q.replace(' sort:', f' label:"{BLOCKED_LABEL}" sort:'), heavy=True, limit=40)
@@ -3019,6 +3134,12 @@ def board_split(person, args):
             dec = show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
             mine_dec = bool(login) and dec.lower() == person_of(login, base).lower() and on_team(login, base)
             extra = {'decider': dec, 'can_decide': mine_dec, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
+            # 0.47.0: what the decider says yes or no to, on the card: the builder's pitch and its Before / After
+            # screenshots (the ones GET /api/shot can show), from the builder's comments this read already has
+            sp = show_pitch([c.get('body') or '' for c in (n.get('comments') or {}).get('nodes') or []
+                             if is_builder_login(((c.get('author') or {}).get('login') or ''), base)], n.get('body'))
+            extra.update(pitch=sp['pitch'], before=[u for u in sp['before'] if shot_source(u)],
+                         after=[u for u in sp['after'] if shot_source(u)])
         elif group == 'shipping':
             extra = {'delivers_ship': True}
             if cat == 'bug':
@@ -5700,12 +5821,12 @@ class Handler(BaseHTTPRequestHandler):
         # Each person signs in with their own token. Behind the Wizard gateway the tailnet login names them.
         return self.headers.get('Tailscale-User-Login') or ''
 
-    def send(self, code, body=None, content_type='application/json'):
+    def send(self, code, body=None, content_type='application/json', cache='no-store'):
         b = body if isinstance(body, bytes) else b'' if body is None else json.dumps(body).encode()
         self.send_response(code)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(b)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'")
@@ -5768,6 +5889,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/avatar':
                 data, kind = avatar(self.person())
                 return self.send(200, data, kind)
+            if path == '/api/shot':   # 0.47.0: a show-and-tell screenshot (private repos of the team's org only)
+                data, kind = shot(self.person(), q.get('u'))
+                return self.send(200, data, kind, cache='private, max-age=86400')
         except Problem as e:
             return self.send(e.code, {'error': e.message, **({'reason': e.reason} if e.reason else {})})
         name = 'index.html' if path == '/' else path[1:]
