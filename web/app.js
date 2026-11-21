@@ -144,7 +144,9 @@ function hold(on) {
 const repoName = r => (r || '').split('/').pop();
 // 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
 const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
-const typing = () => !!document.querySelector('.bd-fail');
+// 0.43.1: an open note (Doesn't work, a confirm) holds re-renders; the item sheet's reply box (0.42.0, a .bd-fail form
+// that is always in the page) never does, or the list never drew after loading
+const typing = () => !!document.querySelector('.bd-fail:not(.bd-d-reply)');
 const sheetOpen = () => ['detail', 'filter', 'settings', 'report', 'appmodal'].some(x => el(x).open);
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
@@ -3496,7 +3498,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.43.0';
+const PAGE_VERSION = '0.43.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3579,7 +3581,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.43.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.43.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
