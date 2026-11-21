@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.45.0'
+VERSION = '0.45.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3130,13 +3130,19 @@ def _board_key(person, args):
 
 
 def _board_refresh(key, person, args):
+    with LOCK:
+        gate_ = _boards_gate.setdefault(key, threading.Lock())
+    got = gate_.acquire(blocking=False)   # 0.45.1: a page request is reading it right now: that read is the refresh
     try:
-        out = board_split(person, args)
-        with LOCK:
-            _boards[key] = (time.time(), out)
+        if got:
+            out = board_split(person, args)
+            with LOCK:
+                _boards[key] = (time.time(), out)
     except Exception:   # noqa: BLE001 - the next page load reads it itself
         pass
     finally:
+        if got:
+            gate_.release()
         with LOCK:
             _boards_busy.discard(key)
 
@@ -3159,13 +3165,35 @@ def board_served(person, args):
         if go:
             threading.Thread(target=_board_refresh, args=(key, person, {**args, 'refresh': False}), daemon=True).start()
         return _without(hit[1], recently_decided(now))
-    out = board_split(person, args)
+    # 0.45.1: one GitHub read per (person, view) at a time: the page's tabs, Waiting on me and the badge ask together,
+    # and parallel heavy searches tripped GitHub's secondary limit (then every view failed for a minute)
     with LOCK:
-        _boards[key] = (time.time(), out)
-        if len(_boards) > 64:
-            for k in sorted(_boards, key=lambda k: _boards[k][0])[:len(_boards) - 64]:
-                _boards.pop(k, None)
-    return out
+        gate_ = _boards_gate.setdefault(key, threading.Lock())
+    with gate_:
+        with LOCK:
+            hit = _boards.get(key)
+        if hit and hit[0] >= now and not _board_forgot(tok, hit):
+            return _without(hit[1], recently_decided())   # another request read it while this one waited
+        try:
+            out = board_split(person, args)
+        except Problem as e:
+            # GitHub limited or down: the last answer (up to BOARD_STALE old) beats an error page; marked stale
+            if hit and e.code in (429, 502, 503, 504) and time.time() - hit[0] < BOARD_STALE:
+                return {**_without(hit[1], recently_decided()), 'stale': True, 'stale_reason': e.message}
+            raise
+        with LOCK:
+            _boards[key] = (time.time(), out)
+            if len(_boards) > 64:
+                for k in sorted(_boards, key=lambda k: _boards[k][0])[:len(_boards) - 64]:
+                    _boards.pop(k, None)
+        return out
+
+
+_boards_gate = {}
+
+
+def _board_forgot(tok, hit):
+    return bool(tok) and _forgot.get(_tid(tok), 0) > hit[0]
 
 
 # ---------- 0.34.0 Needs you badge (Miguel, 15 Nov: "anything that's actually waiting on me ... as a badge") ----------
