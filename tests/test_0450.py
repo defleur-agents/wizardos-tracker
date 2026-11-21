@@ -20,6 +20,7 @@ JS = (ROOT / 'web' / 'app.js').read_text()
 HTML = (ROOT / 'web' / 'index.html').read_text()
 CSS = (ROOT / 'web' / 'styles.css').read_text()
 BOT = 'wizardos-builder[bot]'
+PAGE = re.search(r"const PAGE_VERSION = '([^']+)'", JS).group(1)
 SHOW = ['feature', 'show-and-tell']
 
 
@@ -143,6 +144,38 @@ class Board(unittest.TestCase):
         self.assertNotIn(3, [i['number'] for i in fresh['groups']['show']])
         self.assertEqual(S.needs_you('m')['count'], before - 1)
 
+    def test_one_read_at_a_time_and_stale_on_limit(self):   # 0.45.1
+        import threading
+        calls, gate = [], threading.Event()
+        real, real_split = S._view_search, S.board_split
+
+        def slow(token, view, q, **kw):
+            gate.wait(2)
+            return real(token, view, q, **kw)
+        S._view_search = slow
+        S.board_split = lambda p, a: calls.append(a['view']) or real_split(p, a)
+        self.addCleanup(setattr, S, 'board_split', real_split)
+        out = []
+        ts = [threading.Thread(target=lambda: out.append(S.board_served('m', {'view': 'apps'}))) for _ in range(4)]
+        for t in ts:
+            t.start()
+        time.sleep(0.3)
+        gate.set()
+        for t in ts:
+            t.join(5)
+        self.assertEqual(calls, ['apps'])             # four requests, one GitHub read
+        self.assertEqual(len(out), 4)
+
+        def limited(*a, **k):
+            raise S.Problem(429, 'GitHub limit reached; back in a minute.', 'rate_limited')
+        S._view_search = limited
+        d = S.board_served('m', {'view': 'apps', 'refresh': True})   # Reload while limited: the last answer, marked
+        self.assertTrue(d['stale'])
+        self.assertEqual(d['counts'], out[0]['counts'])
+        S._boards.clear()
+        with self.assertRaises(S.Problem):
+            S.board_served('m', {'view': 'apps'})     # nothing kept: the error as before
+
     def test_served_is_kept(self):
         a = S.board_served('m', {'view': 'apps'})
         calls = []
@@ -253,8 +286,8 @@ console.log(JSON.stringify([text(a), b.children.map(x => x.textContent), c]));""
         tail = CSS[CSS.index('0.45.0'):]
         self.assertNotRegex(tail, r'#[0-9a-fA-F]{3,8}\b|rgba?\(')
         self.assertNotRegex(tail, r'font-size:\s*[0-9.]+px')
-        self.assertEqual(S.VERSION, '0.45.0')
-        self.assertIn("const PAGE_VERSION = '0.45.0';", JS)
+        self.assertEqual(S.VERSION, PAGE)
+        self.assertIn(f"const PAGE_VERSION = '{PAGE}';", JS)
 
     def test_node_check(self):
         if not shutil.which('node'):

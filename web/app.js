@@ -3478,7 +3478,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.45.0';
+const PAGE_VERSION = '0.45.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3561,7 +3561,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.45.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.45.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
