@@ -271,6 +271,7 @@ class N { constructor(t){this.tag=t;this.children=[];this.classList={add:()=>{}}
 const make = (t, c, x) => { const n = new N(t); n.className = c; if (x !== undefined) n.textContent = x; return n; };
 const smallBtn = (t, f) => make('button', 'bd-mini', t);
 const text = n => typeof n === 'string' ? n : (n.textContent || '') + (n.children || []).map(text).join('|');
+const tryState = () => ({}), tryToggle = () => null;   // 0.48.1: these items have no switch
 """
         src = stub + fn('actionArea') + """
 const a = actionArea({group: 'show', kind: 'feature', category: 'core', decider: 'James', can_decide: false}, false);

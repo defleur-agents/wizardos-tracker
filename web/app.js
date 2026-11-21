@@ -492,7 +492,7 @@ function render(d) {
   if (secs.length && secs[secs.length - 1].tagName === 'HR') secs.pop();   // nothing below the 'Your turn' group
   el('secs').replaceChildren(...secs);
   // 0.16: in the background, cached. 0.20: shipped bugs in their AI check too (their line names the release)
-  const askOn = [...(d.groups.test || []), ...(d.view === 'bugs' ? d.groups.airev || [] : [])];
+  const askOn = [...(d.groups.test || []), ...(d.groups.show || []), ...(d.view === 'bugs' ? d.groups.airev || [] : [])];   // 0.48.1: show-and-tell too (Try it)
   if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
   if (refocus) backTo();   // 0.21: just closed an app sheet: stay on the same card and button through repaints
   el('empty').hidden = any;
@@ -1971,6 +1971,17 @@ function actionArea(i, inDetail) {
   }
   // 0.45.0 (Miguel, 21 Nov): no pre-build approval exists any more (policy core_approval_not_needed_since): no buttons
   if (g === 'show') {   // 0.45.0: Approve / Decline for the decider only; everyone else just sees who decides
+    // 0.48.1 (Miguel, 21 Nov): Try it is back. It lived only on the hand-testing cards, and went with them in 0.43.0;
+    // a feature ships switched off, so without it nobody could switch one on to see it before saying yes or no.
+    // Anyone on the team may try; greyed with the reason (and its Update button) when this Wizard can't flip it yet.
+    const t0 = tryState(i), tg0 = tryToggle(i);
+    if (t0.run) row.append(updPanel(t0.run, i));
+    if (tg0) {
+      const grp = make('div', 'bd-trygrp'); grp.append(tg0);
+      if (t0.app && t0.app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${t0.app.name}`, b => openApp(t0.app.id, t0.app.name, b, i)), i));
+      row.append(grp);
+      if (!t0.run) row.append(...blockerBits(i, t0, t0.why));
+    }
     if (!i.can_decide) { row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return row; }
     const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
     const yes = smallBtn('Approve', b => askPop(b, (n > 1 ? `Approve all ${n} parts?` : 'Approve?') + ' The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
@@ -3342,7 +3353,7 @@ async function followOS(r, from) {
     updates = u; r.quick = !!u.quick;
     if (u.installed && (u.installed === r.to || (from && u.installed !== from && !u.installing))) {
       store.set('board.osrun', null); facts.release = u.installed; factsReady = null; onbox.clear(); runEnd(r, true);
-      if (cache[view]) checkOnBox([...((cache[view].groups || {}).test || [])]);
+      if (cache[view]) checkOnBox([...((cache[view].groups || {}).test || []), ...((cache[view].groups || {}).show || [])]);
       return;
     }
     if (u.failed || u.interrupted) throw new Error(u.failure_reason || 'The WizardOS update stopped.');
@@ -3623,7 +3634,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.48.0';
+const PAGE_VERSION = '0.48.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3706,7 +3717,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.48.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.48.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
