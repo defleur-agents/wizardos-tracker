@@ -1669,6 +1669,7 @@ function itemCard(i) {
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(i)); h.textContent = i.title;
   top.append(h); c.append(top);
+  if (i.group === 'show') c.append(...showTell(i));   // 0.47.0
   const fb = window.FeedbackStage && FeedbackStage.chip(i);   // 0.26.5: label from-feedback
   if (fb) c.insertBefore(fb, top);
   if (i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'))) {   // 0.37.0
@@ -1690,6 +1691,44 @@ function itemCard(i) {
   const when_ = i.group === 'done' || i.group === 'shipping' && i.closed_at ? (i.closed_at ? 'closed ' + when(i.closed_at) : '') : age(i.created_at);
   c.append(make('p', 'bd-hint', [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_].filter(Boolean).join(' · ')));
   return c;
+}
+// 0.47.0 (Miguel, 21 Nov): what a show-and-tell card asks a yes or no for, on the card: the builder's pitch, then its
+// screenshots (After first, then Before). The pictures come through the Tracker (api/shot); one that does not load
+// takes itself away. A card with neither looks as before.
+const shotGone = new Set();
+function showTell(i) {
+  const out = [];
+  if (i.pitch) out.push(make('p', 'bd-pitch', i.pitch));
+  const row = make('div', 'bd-thumbs');
+  for (const [label, urls] of [['After', i.after], ['Before', i.before]]) {
+    for (const u of Array.isArray(urls) ? urls : []) {
+      const src = 'api/shot?u=' + encodeURIComponent(u);
+      if (shotGone.has(src)) continue;
+      const b = make('button', 'bd-thumb'), img = make('img');
+      b.type = 'button'; b.setAttribute('aria-label', label + ' screenshot: open full size');
+      img.loading = 'lazy'; img.alt = ''; img.src = src;
+      img.onerror = () => { shotGone.add(src); b.remove(); if (!row.children.length) row.remove(); };
+      b.append(img, make('span', 'bd-thumb-l', label));
+      b.onclick = () => shotView(src, label);
+      row.append(b);
+    }
+  }
+  if (row.children.length) out.push(row);
+  return out;
+}
+// One screenshot full size, in the kit's sheet (×, Esc, tap outside and Back close it; so does a tap on the picture)
+function shotView(src, label) {
+  let d = el('shotview');
+  if (!d) {
+    d = make('dialog', 'wz-sheet bd-shotview'); d.id = 'shotview';
+    d.append(make('h2'), make('img'));
+    d.lastChild.onclick = () => WzSheet.close(d);
+    document.body.append(d);
+  }
+  d.querySelector('h2').textContent = label;
+  const img = d.querySelector('img');
+  img.alt = label + ' screenshot'; img.src = src;
+  WzSheet.open(d);
 }
 // 0.27 (Miguel): a phrase like 'Not released yet' says it at most once per card (the first stays; a later element that
 // says only that goes, and the words go from a longer line)
@@ -3531,7 +3570,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.46.1';
+const PAGE_VERSION = '0.47.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3614,7 +3653,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.46.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.47.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
