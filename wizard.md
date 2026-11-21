@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.48.1
+version: 0.49.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.49.0** (Oscar for Miguel, 21 Nov) **Clean-up: each thing is said once.** Gone: the Waiting on people row under the stage strip (the strip's two Human tiles already show those counts and filter the same way); the Human step chip on every card (its section heading and the card's edge say it); 'X decides' under a card that already opens with 'Waiting on X'; 'Waiting on you' on every card of Waiting on me; AI review and Tested in the strip while they are empty (nothing goes through them any more). Core's first build stage is called Queued, as on Apps and Bugs. On a phone the strip shows every stage at once instead of scrolling sideways. The Filter sheet lists a person once whatever capitals their login has.
 
 **0.48.1** (Oscar for Miguel, 21 Nov) **Try it is back, on the show-and-tell card.** The switch lived only on the hand-testing cards and went with them in 0.43.0, so a feature that ships switched off could not be switched on from the Tracker before its yes or no. Every show-and-tell card whose item has a switch shows Try it again (anyone on the team; greyed with the reason and its Update button when this Wizard cannot flip it yet), with Open <app> beside it.
 

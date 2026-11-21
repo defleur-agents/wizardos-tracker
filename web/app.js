@@ -402,7 +402,8 @@ async function loadStats(which) {
 
 function authorsOf(d) {
   const n = new Map();
-  for (const i of Object.values(d.groups || {}).flat()) if (i.author) n.set(i.author, (n.get(i.author) || 0) + 1);
+  const as = new Map();   // 0.49.0: one row per login, whatever its capitals (JanMesaric and janmesaric were two)
+  for (const i of Object.values(d.groups || {}).flat()) if (i.author) { const k = i.author.toLowerCase(); if (!as.has(k)) as.set(k, i.author); n.set(as.get(k), (n.get(as.get(k)) || 0) + 1); }
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
@@ -441,7 +442,7 @@ function render(d) {
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
-  if (goals) { if (el('human-n')) el('human-n').hidden = true; return renderGoals(d, keep, order); }
+  if (goals) return renderGoals(d, keep, order);
   const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
   groups.show = onePerIdea(groups.show);   // 0.48.0: the pieces of one idea are one card (and count once)
   for (const i of groups.test) i.nextrel = comingNext(i);
@@ -460,8 +461,9 @@ function render(d) {
   let bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
   // 0.41.0: once the old backlog is approved, Waiting for approval leaves the strip
   if (d.view === 'core' && !(groups.james || []).length && stage[d.view] !== 'james') bins = bins.filter(b => b.key !== 'james');
+  // 0.49.0 (Miguel, 21 Nov): a stage nothing goes through any more leaves the strip while it is empty
+  bins = bins.filter(b => !(b.key === 'airev' || b.key === 'test') || stage[d.view] === b.key || b.groups.some(g => (groups[g] || []).length));
   strip(d, bins, groups);
-  humanCounts(bins, groups);   // 0.46.0
   flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
@@ -616,29 +618,6 @@ function humanTag(word = 'Human') {
   return t;
 }
 // the card's step chip: 'Human step · Show-and-tell'
-function humanChip(stepWord) {
-  const t = make('span', 'bd-human-chip'); t.title = HUMAN_TIP;
-  t.append(humanIcon(), make('span', '', 'Human step · ' + stepWord));
-  return t;
-}
-// 0.46.0: the count in each human step, prominent, under the strip: 'Waiting on people · Pending approval 2 · Show-and-tell 5'
-function humanCounts(bins, groups) {
-  const p = el('human-n'); if (!p) return;
-  const hs = bins.filter(x => isHuman(x.key));
-  p.hidden = !hs.length;
-  if (!hs.length) return p.replaceChildren();
-  const parts = [humanTag('Waiting on people')];
-  for (const x of hs) {
-    const lists = x.groups.map(g => groups[g]);
-    const n = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
-    const b = make('button', 'bd-human-c' + (n ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
-    b.append(make('span', 'bd-human-cw', x.word), make('b', 'bd-human-cn', n == null ? '—' : String(n)));
-    b.setAttribute('aria-label', `${x.word} (human step): ${n == null ? 'counting' : n} waiting. Show only ${x.word}`);
-    b.onclick = () => setStage(x.key);
-    parts.push(b);
-  }
-  p.replaceChildren(...parts);
-}
 const arrow = () => {
   const li = make('li', 'bd-arrow'); li.setAttribute('aria-hidden', 'true');
   const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 20 12');
@@ -820,7 +799,7 @@ function binsOf(v) {
   // 0.41.0 (Miguel, 20 Nov): new core features need no approval; Waiting for approval holds only the older backlog
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'Older core features: James or Miguel approves' },
     // 0.36.6 (James, 17 Nov): Building is its own stage again, so you see whether the builder is working
-    { key: 'queued', word: 'Build queue', groups: ['sorting', 'queued'], info: 'corebuild', tip: 'Waiting for the builder' },
+    { key: 'queued', word: 'Queued', groups: ['sorting', 'queued'], info: 'corebuild', tip: 'Waiting for the builder' },
     { key: 'building', word: 'Building', groups: ['building'], info: 'building', tip: 'The builder is on it' }, ASK, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
@@ -1634,7 +1613,8 @@ function waitHead(i) {
   if (!(g in WAIT_WHAT)) return null;   // 0.28: a builder question is its own stage (Needs an answer), not a stuck queue
   const who = (wo.who || []).filter(Boolean);
   if (!who.length) return null;
-  const me = (cache[view] || {}).me_person || '';
+  const me = (cache[view] || {}).me_person || Object.values(cache).map(c => c && c.me_person).find(Boolean) || '';
+  if (view === 'me' && who.every(w => w === me)) return null;   // 0.49.0: everything in Waiting on me waits on you
   if (g === 'test' && wo.what) {
     // 0.35.0: a Human review item someone else has to act on first: 'Waiting on James: Mac build'
     const p = make('p', 'bd-waiton bd-waiton-other' + (who.some(w => w === me) ? ' me' : ''));
@@ -1664,7 +1644,6 @@ function checkTag(i) {
 function itemCard(i) {
   const human = i.group === 'show' && !i.nextrel;   // 0.46.0: Show-and-tell, a human step
   const c = make('article', 'bd-card bd-card-calm bd-icard' + (i.nextrel ? ' bd-next' : '') + (human ? ' bd-human-card' : ''));
-  if (human) c.append(humanChip('Show-and-tell'));
   const wh = waitHead(i);
   if (wh) c.append(wh);
   const top = make('div', 'bd-card-top');
@@ -1982,7 +1961,8 @@ function actionArea(i, inDetail) {
       row.append(grp);
       if (!t0.run) row.append(...blockerBits(i, t0, t0.why));
     }
-    if (!i.can_decide) { row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return row; }
+    // 0.49.0: the card's first line already says who it waits on; 'X decides' only when that line is missing
+    if (!i.can_decide) { const said = !!waitHead(i); if (!said) row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return said && !tg0 && !t0.run ? null : row; }
     const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
     const yes = smallBtn('Approve', b => askPop(b, (n > 1 ? `Approve all ${n} parts?` : 'Approve?') + ' The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
     yes.classList.add('bd-mini-go');
@@ -3594,7 +3574,6 @@ function renderMe() {
   if (view !== 'me') return;
   for (const id of ['totals', 'filtered']) el(id).textContent = '';
   el('strip').replaceChildren();
-  if (el('human-n')) { el('human-n').hidden = true; el('human-n').replaceChildren(); }
   const secs = [];
   const loading = VIEWS.some(v => !cache[v]);
   const items = meItems();   // 0.45.0: updates stay in the main screen's Update bar and Settings, Feedback on its tabs
@@ -3634,7 +3613,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.48.1';
+const PAGE_VERSION = '0.49.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3717,7 +3696,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.48.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.49.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

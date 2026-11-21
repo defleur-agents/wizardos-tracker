@@ -49,8 +49,6 @@
   function card(i) {
     const c = make('article', 'bd-card bd-card-calm bd-icard bd-fbcard bd-human-card'); c.dataset.feedback = String(i.number);
     const chips = make('p', 'bd-fbchips');
-    // 0.46.0: Pending approval is one of the two human steps (app.js humanChip)
-    if (typeof humanChip === 'function') chips.append(humanChip('Pending approval'));
     chips.append(fbChip('From Feedback app', 'src'), fbChip(i.kind_word || (i.kind === 'bug' ? 'Bug' : 'Idea'), i.kind === 'bug' ? 'bug' : 'idea'));
     c.append(chips);
     c.append(make('h3', 'bd-title bd-fbtitle', i.title || 'Feedback'));

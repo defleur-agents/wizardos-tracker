@@ -19,8 +19,7 @@
     const heads = [...el('secs').querySelectorAll('.bd-sec')].map(s => ({ id: s.id, human: s.querySelector('.bd-sec-h').classList.contains('bd-human') }));
     const cards = [...el('secs').querySelectorAll('.bd-icard')].map(c => ({ title: (c.querySelector('.bd-title') || {}).textContent, human: c.classList.contains('bd-human-card'),
       chip: (c.querySelector('.bd-human-chip') || {}).textContent || null }));
-    const counts = el('human-n').hidden ? null : [...el('human-n').querySelectorAll('.bd-human-c')].map(b => [b.dataset.step, b.querySelector('.bd-human-cn').textContent]);
-    return { bins, stats, heads, cards, counts };
+    return { bins, stats, heads, cards, row: !!document.getElementById('human-n') };
   };
   for (const v of ['apps', 'bugs']) {
     view = v;
