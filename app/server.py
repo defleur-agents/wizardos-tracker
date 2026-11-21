@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.47.0'
+VERSION = '0.48.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2955,11 +2955,25 @@ def other_wait(repo, delivers, rows, opener, base=None, mac=None, phone=None):
     return None
 
 
+def one_per_idea(items):
+    """0.48.0: a list of cards with the pieces of one idea (show-and-tell cards carry `idea`) counted once."""
+    seen, out = set(), []
+    for i in items or []:
+        k = i.get('idea')
+        if k and k in seen:
+            continue
+        if k:
+            seen.add(k)
+        out.append(i)
+    return out
+
+
 def waiting_summary(groups):
     """0.25: per stage, how many items wait on whom (most first) and how many are stuck: the bottleneck line."""
     out = {}
     for g, items in groups.items():
         by = {}
+        items = one_per_idea(items)   # 0.48.0: the pieces of one idea at show-and-tell wait as one
         for i in items:
             name = ' or '.join((i.get('waiting_on') or {}).get('who') or [])   # 'James or Miguel' is one entry
             if name:
@@ -3107,6 +3121,15 @@ def board_split(person, args):
     decided = recently_decided(now)
     groups = {g: [] for g in OPEN_GROUPS}
     james, approver = is_james(login, base), is_core_approver(login, base)
+    # 0.48.0: the pieces of one idea at show-and-tell are one card with one decider (idea_groups); ideas cross tabs, so
+    # they come from the org's whole show-and-tell list (one read a minute, shared by every tab and /api/decisions)
+    ideas, listed = {}, {}
+    if any(SHOW_LABEL in {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []} for n in nodes):
+        try:
+            show_items, ideas = show_ideas(acct, base, decided)
+            listed = {i['id'].lower(): i for i in show_items}
+        except Problem:
+            pass   # every card decides alone, as before 0.48.0, until the next read
     for n in nodes:
         repo = n['repository']['nameWithOwner']
         names = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
@@ -3131,9 +3154,16 @@ def board_split(person, args):
         elif group == 'show':
             # 0.44.0 (Miguel, 21 Nov): every feature has one decider (James for core repos, the filer for apps); it is their
             # turn. 0.45.0 (Miguel, 21 Nov): ONLY the decider may Approve / Decline; nobody presses 'James approved' for him.
-            dec = show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
+            idea = ideas.get(iid.lower())
+            dec = idea['decider'] if idea else show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
             mine_dec = bool(login) and dec.lower() == person_of(login, base).lower() and on_team(login, base)
             extra = {'decider': dec, 'can_decide': mine_dec, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
+            pieces = [listed[x.lower()] for x in idea['parts']] if idea else []
+            extra['idea'] = idea['idea'] if idea else iid
+            extra['parts'] = ([{k: x.get(k) for k in ('id', 'repo', 'number', 'title', 'url')} for x in pieces]
+                              or [{'id': iid, 'repo': repo, 'number': n['number'], 'title': n.get('title'), 'url': n.get('url')}])
+            if len(pieces) > 1:
+                extra['idea_show'] = idea_show(pieces)   # what the one card shows: the root's title, pitch and pictures
             # 0.47.0: what the decider says yes or no to, on the card: the builder's pitch and its Before / After
             # screenshots (the ones GET /api/shot can show), from the builder's comments this read already has
             sp = show_pitch([c.get('body') or '' for c in (n.get('comments') or {}).get('nodes') or []
@@ -3206,7 +3236,7 @@ def board_split(person, args):
     return {**common, 'steps': steps_for(sview, base), 'groups': groups, 'human_reviews': 1,
             'repos': view_repos(acct['token'], org, view, base),
             'waiting': waiting_summary(groups),
-            'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
+            'counts': {k: len(one_per_idea(v)) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
@@ -3236,7 +3266,7 @@ def _without(d, gone):
     groups = {g: [i for i in v if i.get('id') not in gone] for g, v in d['groups'].items()}
     if all(len(groups[g]) == len(d['groups'][g]) for g in groups):
         return d
-    out = {**d, 'groups': groups, 'counts': {k: len(v) for k, v in groups.items()},
+    out = {**d, 'groups': groups, 'counts': {k: len(one_per_idea(v)) for k, v in groups.items()},
            'shown': sum(len(v) for v in groups.values())}
     for k in ('test', 'doing'):
         if isinstance(d.get(k), list):
@@ -3337,7 +3367,8 @@ def needs_you_split(splits):
     """The counting rule over board_split answers (pure; tests feed it fixtures) -> (items, waiting). Per card:
     - test   (Human review): the viewer filed it and it's their turn; shipped bugs have turn False and never count;
     - answer (builder question): asked of the viewer's person;
-    - show   (show-and-tell, 'To approve'): its decider only (James for core repos, the filer for app repos);
+    - show   (show-and-tell, 'To approve'): its decider only (James for core repos, the filer for app repos); 0.48.0:
+              the pieces of one idea count once, under the idea's root;
     - goals: James only (0.45.0): a status missing or stale, or Pending final review.
     0.45.0: the old pre-build core approval ('james') never counts; the page's Waiting on me uses this same rule.
     0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
@@ -3357,6 +3388,10 @@ def needs_you_split(splits):
                 elif g == 'goals' and turn:
                     why = c.get('turn_why') or 'Your goal needs a status'
                 iid = c.get('id')
+                lead = c.get('idea_show') if g == 'show' and c.get('idea') else None   # 0.48.0: an idea counts once
+                if lead:
+                    c = {**c, 'id': c['idea'], 'title': lead.get('title') or c.get('title')}
+                    iid = c['id']
                 if not (why and iid) or iid in seen:
                     continue
                 seen.add(iid)
@@ -5248,23 +5283,95 @@ def show_pitch(builder_bodies, issue_body=None):
 DECIDE_Q = 'label:"show-and-tell" -label:goal'
 
 
-def decisions(person, args=None, agent=False):
-    """GET /api/decisions -> {me, count, items}: the show-and-tell features the signed-in person decides (oldest first),
-    each {id, repo, number, title, url, category, decider, opener, pitch, before, after, switch}. ?for=<name> lists that
-    person's queue (read-only), ?for=all everyone's; `counts` is {person: n} for the whole team."""
-    args = args or {}
-    _, acct = account_for(person, agent)
-    base = policy_base()
-    login = acct.get('login') or ''
-    me = person_of(login, base)
-    org = settings()['org']
+# ---------- 0.48.0 (Miguel, 21 Nov 2026): one idea, one yes or no ----------
+# The builder splits one idea into pieces across repos and each piece asked a person for its own decision (95 cards,
+# ten of them the one 'Agent inbox' idea). Show-and-tell items are ONE idea when
+#  (a) they name the same switch (case-insensitive; a switch is one thing and cannot be half approved; no switch or
+#      'none' never joins anything), or
+#  (b) one carries a line `Part of: <owner>/<repo>#<n>` (or `<repo>#<n>`, the team's org) at the start of a line in its
+#      body or in a comment by a team member, their agent or the builder bot, naming an item that is itself at
+#      show-and-tell now.
+# Joining is transitive. The idea's root is its oldest piece; its decider is the core decider when any piece is in a
+# core repo, else the root's decider. An item joined to nothing is an idea of one and behaves as before. Everything
+# reads this one definition: GET /api/decisions (counts are ideas: the builder's cap), GET /api/split (one card per
+# idea) and POST /api/decide (a yes or no on any piece decides every piece).
+PART_OF = re.compile(r'(?im)^[ \t>*_`-]*part[ \t]+of[*_`]*[ \t]*:[ \t*_`\[]*(?:([\w.-]+)/)?([\w.-]+)#(\d+)\b')
+_decide_gates = {}  # token id -> lock: one show-and-tell read at a time (the tabs and the decisions list ask together)
+
+
+def part_of_refs(texts, org):
+    """The items these texts say they are part of (`Part of: owner/repo#n` lines) -> ['owner/repo#n' lower-cased];
+    another org's are skipped."""
+    out = []
+    for t in texts or []:
+        for m in PART_OF.finditer(t if isinstance(t, str) else ''):
+            if (m.group(1) or org).lower() == (org or '').lower():
+                out.append(f'{org}/{m.group(2)}#{int(m.group(3))}'.lower())
+    return out
+
+
+def idea_groups(items, base=None, gone=()):
+    """Join show-and-tell items into ideas (pure). items: [{id, repo, created_at, decider, switch, _part_of}] ->
+    {id lower-cased: {'idea': root id, 'parts': [ids, root first, then oldest first], 'all': [ids], 'decider': name}}.
+    `gone` (ids decided here a moment ago, still listed by GitHub search) stay in 'all' and in the decider rule but
+    leave 'parts'; an idea with nothing left is left out."""
+    base = base or policy_base()
+    by = {}
+    for i in items or []:
+        by.setdefault(i['id'].lower(), i)
+    up = {k: k for k in by}
+
+    def find(k):
+        while up[k] != k:
+            up[k] = up[up[k]]
+            k = up[k]
+        return k
+    first = {}
+    for k, i in by.items():
+        sw = str(i.get('switch') or '').strip().lower()
+        if sw and not sw.startswith('none'):
+            if sw in first:
+                up[find(k)] = find(first[sw])
+            else:
+                first[sw] = k
+        for ref in i.get('_part_of') or []:
+            if ref in by and ref != k:
+                up[find(k)] = find(ref)
+    sets = {}
+    for k, i in by.items():
+        sets.setdefault(find(k), []).append(i)
+    core = (base.get('show_deciders') or POLICY_DEFAULT['show_deciders'])['core']
+    low_gone = {str(g).lower() for g in gone or ()}
+    out = {}
+    for members in sets.values():
+        members.sort(key=lambda i: _ts(i.get('created_at')) or float('inf'))   # stable: the list's order on a tie
+        live = [m for m in members if m['id'].lower() not in low_gone]
+        if not live:
+            continue
+        dec = core if len(members) > 1 and any(is_core(m['repo'], base) for m in members) else members[0]['decider']
+        info = {'idea': live[0]['id'], 'parts': [m['id'] for m in live], 'all': [m['id'] for m in members], 'decider': dec}
+        for m in live:
+            out[m['id'].lower()] = info
+    return out
+
+
+def _show_items(acct, base, refresh=False):
+    """Every open feature at show-and-tell in the org (oldest first), read once per DECIDE_SECONDS and account."""
     tid = _tid(acct['token'])
-    now = time.time()
-    hit = _decide_cache.get(tid)
-    if hit and now - hit[0] < DECIDE_SECONDS and not args.get('refresh'):
-        items = hit[1]
-    else:
-        nodes, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {DECIDE_Q} sort:created-asc', heavy=True, limit=200)
+    with LOCK:
+        gate_ = _decide_gates.setdefault(tid, threading.Lock())
+    with gate_:
+        now = time.time()
+        hit = _decide_cache.get(tid)
+        if hit and now - hit[0] < DECIDE_SECONDS and not refresh:
+            return hit[1]
+        org = settings()['org']
+        try:
+            nodes, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {DECIDE_Q} sort:created-asc', heavy=True, limit=200)
+        except Problem:
+            if hit and not refresh:
+                return hit[1]   # GitHub is limited or down: the last list, so ideas stay joined
+            raise
         look = _author_lookup(acct)
         items = []
         for n in nodes:
@@ -5273,26 +5380,69 @@ def decisions(person, args=None, agent=False):
             if category(repo, names, base) in ('goal', 'bug'):
                 continue
             author = (n.get('author') or {}).get('login') or ''
-            said = [c.get('body') or '' for c in (n.get('comments') or {}).get('nodes') or []
-                    if is_builder_login(((c.get('author') or {}).get('login') or ''), base)]
+            rows = [(((c.get('author') or {}).get('login') or ''), c.get('body') or '') for c in (n.get('comments') or {}).get('nodes') or []]
+            said = [b for w, b in rows if is_builder_login(w, base)]
             sw, how = switch_info(said, n.get('body'))
             items.append({'id': f"{repo}#{n['number']}", 'repo': repo, 'number': n['number'], 'title': n.get('title'),
                           'url': n.get('url'), 'category': 'core' if is_core(repo, base) else 'app',
                           'decider': show_decider(repo, author, n.get('body'), base, look),
                           'opener': filer_person(repo, author, n.get('body'), base, look) or person_of(author, base),
-                          'created_at': n.get('createdAt'), 'switch': sw or how, **show_pitch(said, n.get('body'))})
+                          'created_at': n.get('createdAt'), 'switch': sw or how, **show_pitch(said, n.get('body')),
+                          # a stranger's comment never joins anything: the team, their agents and the builder only
+                          '_part_of': part_of_refs([n.get('body')] + [b for w, b in rows if on_team(w, base) or is_builder_login(w, base)], org)})
         with LOCK:
             _decide_cache[tid] = (now, items)
+        return items
+
+
+def show_ideas(acct, base, gone=(), refresh=False):
+    """(items still waiting at show-and-tell, {id lower-cased: its idea}): the one definition of an idea."""
+    items = _show_items(acct, base, refresh)
+    ideas = idea_groups(items, base, gone)
+    return [i for i in items if i['id'].lower() in ideas], ideas
+
+
+def idea_show(parts):
+    """What a card of several pieces shows: the root's title and pitch, and its pictures (the ones GET /api/shot can
+    show); a root without any takes the first pieces' instead, at most 3 After + 3 Before."""
+    ok = lambda urls: [u for u in urls or [] if shot_source(u)]   # noqa: E731
+    root = parts[0]
+    before, after = ok(root.get('before')), ok(root.get('after'))
+    if not before and not after:
+        for p in parts[1:]:
+            after += [u for u in ok(p.get('after')) if u not in after]
+            before += [u for u in ok(p.get('before')) if u not in before]
+    return {'title': root.get('title'), 'pitch': root.get('pitch') or '', 'before': before[:3], 'after': after[:3]}
+
+
+def decisions(person, args=None, agent=False):
+    """GET /api/decisions -> {me, count, items}: the show-and-tell features the signed-in person decides (oldest first),
+    each {id, repo, number, title, url, category, decider, opener, pitch, before, after, switch}. ?for=<name> lists that
+    person's queue (read-only), ?for=all everyone's; `counts` is {person: n} for the whole team.
+    0.48.0: each item also has `idea` (its idea's root id) and `parts` (ids of every piece, root first) and its decider
+    is the idea's; `counts` counts ideas, not pieces; `ideas` is how many ideas the listed items make."""
+    args = args or {}
+    _, acct = account_for(person, agent)
+    base = policy_base()
+    login = acct.get('login') or ''
+    me = person_of(login, base)
+    now = time.time()
     with LOCK:
         gone = {k for k, t in _decided.items() if now - t < 10 * 60}
-    items = [i for i in items if i['id'] not in gone]
+    items, ideas = show_ideas(acct, base, gone, bool(args.get('refresh')))
+    rows = []
+    for i in items:
+        g = ideas[i['id'].lower()]
+        rows.append({**{k: v for k, v in i.items() if not k.startswith('_')}, 'decider': g['decider'], 'idea': g['idea'],
+                     'parts': list(g['parts'])})
     want = str(args.get('for') or me or '').strip()
     counts = {}
-    for i in items:
-        counts[i['decider']] = counts.get(i['decider'], 0) + 1
-    mine = items if want.lower() == 'all' else [i for i in items if i['decider'].lower() == want.lower()]
+    for g in {g['idea']: g for g in ideas.values()}.values():
+        counts[g['decider']] = counts.get(g['decider'], 0) + 1
+    mine = rows if want.lower() == 'all' else [i for i in rows if i['decider'].lower() == want.lower()]
     mine = [{**i, 'can_decide': bool(me) and i['decider'].lower() == me.lower()} for i in mine]
-    return {'me': me, 'for': want, 'count': len(mine), 'items': mine, 'counts': counts, 'total': len(items)}
+    return {'me': me, 'for': want, 'count': len(mine), 'items': mine, 'counts': counts, 'total': len(rows),
+            'ideas': len({i['idea'] for i in mine})}
 
 
 def _decide_label(acct, full, number, label):
@@ -5304,35 +5454,27 @@ def _decide_label(acct, full, number, label):
                       f'GitHub refused the label \u201c{label}\u201d on {full}#{number}: {e.message}', 'label_refused') from None
 
 
-def decide(person, args, agent=False):
-    """POST /api/decide {repo, number | issue, decision yes|no, note?} (MCP board_decide): the show-and-tell yes or no.
-    Only the item's decider (show_decider) or that person's agent. Yes: approved + switch-default (the builder turns it
-    on for everyone and closes it), or closed at once when the change has no switch. No: closed not planned with label
-    dropped, plus switch-cleanup when it is merged behind a switch (the builder's dropped sweep removes it)."""
-    if agent:
-        _owner_request(args, agent, 'say yes or no at a show-and-tell')
-    _, acct = account_for(person, agent)
-    full, number = _target(args)
-    decision = str(args.get('decision') or '').strip().lower()
-    decision = {'approve': 'yes', 'decline': 'no'}.get(decision, decision)   # 0.45.0: the page's words
-    if decision not in ('yes', 'no'):
-        raise Problem(400, 'decision must be approve or decline (yes or no).')
-    raw = args.get('note')
-    note = re.sub(r'\s+', ' ', raw).strip()[:300] if isinstance(raw, str) else ''
-    login = acct.get('login') or ''
-    base = policy_base()
-    cur = _current(acct, full, number)
+def _decided_same(cur, decision):
+    """Does this item already carry this decision (a retry after some piece failed)?"""
+    names = _labels(cur)
+    if SHOW_LABEL in names:
+        return False
+    if decision == 'yes':
+        return DEFAULT_LABEL in names
+    return (cur.get('state') or 'open') == 'closed' and DROPPED_LABEL in names
+
+
+def _decide_piece(acct, base, full, number, decision, said, cur=None, together=''):
+    """One item's show-and-tell yes or no on GitHub: the labels, the comment and (no) the close, as since 0.45.0.
+    `together` (0.48.0, a piece of an idea of several) is one more sentence in the comment; such a piece that already
+    carries this decision is left alone (`already`), so a retry is safe."""
+    me, login, via, note = said
+    cur = cur or _current(acct, full, number)
     names = _labels(cur)
     if (cur.get('state') or 'open') == 'closed' or SHOW_LABEL not in names:
+        if together and _decided_same(cur, decision):
+            return {'switched': None, 'labels': names, 'state': cur.get('state'), 'state_reason': cur.get('state_reason'), 'already': True}
         raise Problem(409, 'This is not waiting for a yes or no any more. Refresh to see the latest.', 'not_show')
-    author = (cur.get('user') or {}).get('login') or ''
-    decider = show_decider(full, author, cur.get('body'), base, _author_lookup(acct))
-    me = person_of(login, base)
-    if not on_team(login, base) or me.lower() != decider.lower():
-        raise Problem(403, f'This one is {decider}\u2019s to decide' + (' (or their agent).' if not agent else ', not this agent\u2019s person.'), 'not_decider')
-    via = ''
-    if agent or filed_by_agent(login, base):
-        via = ' via ' + (next((a['name'] for t in base['team'] for a in t['agents'] if a['login'].lower() == login.lower()), '') or 'their agent')
     rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
     sw, how = switch_info([b for w, b in _comment_rows(rows) if is_builder_login(w, base)], cur.get('body'))
     switched = bool(sw or how)
@@ -5347,7 +5489,7 @@ def decide(person, args, agent=False):
         _decide_label(acct, full, number, APPROVED_LABEL)
         _decide_label(acct, full, number, DEFAULT_LABEL)
         _drop_label(acct, full, number, SHOW_LABEL)
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body + together})
     else:
         body = f'Show-and-tell: no \u2014 {me} (@{login}{via})' + (f'\n\nWhy: {note}' if note else '')
         cleanup = switched
@@ -5359,7 +5501,7 @@ def decide(person, args, agent=False):
         if cleanup:
             _ensure_label(acct, full, CLEANUP_LABEL, 'c5def5', 'Dropped feature: the builder removes its switch and code')
             _decide_label(acct, full, number, CLEANUP_LABEL)
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body + together})
         for lab in STAGE_LABELS:
             if lab in names:
                 try:
@@ -5373,13 +5515,94 @@ def decide(person, args, agent=False):
         raise Problem(403, f'GitHub did not take the show-and-tell label off {full}#{number} (write access to this repo is needed).')
     with LOCK:
         _decided[f'{full}#{number}'] = time.time()
+    return {'switched': switched, 'labels': now, 'state': after.get('state'), 'state_reason': after.get('state_reason')}
+
+
+def _idea_of(acct, base, iid, again=True):
+    """The idea a yes or no on `iid` decides: every piece GitHub lists at show-and-tell, also the ones decided here a
+    moment ago (a retry still finds them). None: not listed (it decides alone, as before 0.48.0). `again`: an item
+    the kept list does not have yet (it reached show-and-tell this minute) is looked for in a fresh one."""
+    for refresh in (False, True) if again else (False,):
+        g = idea_groups(_show_items(acct, base, refresh), base).get(iid.lower())
+        if g:
+            return g
+    return None
+
+
+def decide(person, args, agent=False):
+    """POST /api/decide {repo, number | issue, decision yes|no, note?} (MCP board_decide): the show-and-tell yes or no.
+    Only the item's decider (show_decider) or that person's agent. Yes: approved + switch-default (the builder turns it
+    on for everyone and closes it), or closed at once when the change has no switch. No: closed not planned with label
+    dropped, plus switch-cleanup when it is merged behind a switch (the builder's dropped sweep removes it).
+    0.48.0: a yes or no on any piece decides its whole idea (idea_groups): the caller must be the idea's decider, every
+    piece gets the same labels and comment (naming the root), and the answer lists `parts` [{id, ok, error?}]. A piece
+    that fails does not stop the others; one that already carries the decision is ok, so a retry is safe; one that
+    left show-and-tell some other way is never touched (`skipped`)."""
+    if agent:
+        _owner_request(args, agent, 'say yes or no at a show-and-tell')
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    decision = str(args.get('decision') or '').strip().lower()
+    decision = {'approve': 'yes', 'decline': 'no'}.get(decision, decision)   # 0.45.0: the page's words
+    if decision not in ('yes', 'no'):
+        raise Problem(400, 'decision must be approve or decline (yes or no).')
+    raw = args.get('note')
+    note = re.sub(r'\s+', ' ', raw).strip()[:300] if isinstance(raw, str) else ''
+    login = acct.get('login') or ''
+    base = policy_base()
+    cur = _current(acct, full, number)
+    names = _labels(cur)
+    iid = f'{full}#{number}'
+    waits = (cur.get('state') or 'open') != 'closed' and SHOW_LABEL in names
+    idea = _idea_of(acct, base, iid, again=waits)
+    multi = bool(idea) and len(idea['all']) > 1
+    if not waits and not (multi and _decided_same(cur, decision)):
+        raise Problem(409, 'This is not waiting for a yes or no any more. Refresh to see the latest.', 'not_show')
+    author = (cur.get('user') or {}).get('login') or ''
+    decider = idea['decider'] if multi else show_decider(full, author, cur.get('body'), base, _author_lookup(acct))
+    me = person_of(login, base)
+    if not on_team(login, base) or me.lower() != decider.lower():
+        raise Problem(403, f'This one is {decider}\u2019s to decide' + (' (or their agent).' if not agent else ', not this agent\u2019s person.'), 'not_decider')
+    via = ''
+    if agent or filed_by_agent(login, base):
+        via = ' via ' + (next((a['name'] for t in base['team'] for a in t['agents'] if a['login'].lower() == login.lower()), '') or 'their agent')
+    said = (me, login, via, note)
+    root = iid
+    if not multi:
+        res = _decide_piece(acct, base, full, number, decision, said, cur)
+        parts = [{'id': iid, 'ok': True}]
+    else:
+        root, res, parts, first = idea['all'][0], None, [], None
+        for pid in idea['all']:
+            p_full, _, p_n = pid.partition('#')
+            mine = pid.lower() == iid.lower()
+            others = [x for x in idea['all'] if x != pid]
+            together = ('\n\n' + (f'Decided together with {root}' if pid != root else 'Decided together with its other parts (' + ', '.join(others) + ')')
+                        + ': one idea, one yes or no.')
+            try:
+                r = _decide_piece(acct, base, p_full, int(p_n), decision, said, cur if mine else None, together)
+                parts.append({'id': pid, 'ok': True, **({'already': True} if r.get('already') else {})})
+                if mine:
+                    res = r
+            except Problem as e:
+                first = first or e
+                parts.append({'id': pid, 'ok': False, 'error': e.message, **({'skipped': True} if e.reason == 'not_show' else {})})
+            except Exception as e:   # noqa: BLE001 - one piece never stops the others
+                first = first or Problem(502, f'{pid}: {e}')
+                parts.append({'id': pid, 'ok': False, 'error': str(e) or type(e).__name__})
+        if not any(p['ok'] for p in parts):
+            raise first
+        if res is None:   # the named piece itself failed; others did not
+            res = {'switched': None, 'labels': names, 'state': cur.get('state'), 'state_reason': cur.get('state_reason')}
+    with LOCK:
         _stats.clear()
         _ship.clear()
         _needs.clear()
     _forget(acct['token'])
-    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'decision': decision, 'decider': decider,
-            'switch_default': decision == 'yes', 'switch': switched, 'labels': now, 'state': after.get('state'),
-            'state_reason': after.get('state_reason'), 'saved': True}
+    failed = sum(1 for p in parts if not p['ok'] and not p.get('skipped'))
+    return {'id': iid, 'repo': full, 'number': number, 'decision': decision, 'decider': decider,
+            'switch_default': decision == 'yes', 'switch': res['switched'], 'labels': res['labels'], 'state': res['state'],
+            'state_reason': res['state_reason'], 'saved': not failed, 'idea': root, 'parts': parts, 'failed': failed}
 
 # ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: <status>', then the text ----------
 # 0.38.0 (Miguel, 18 Nov: "the goal of a goal is that the person doing the goal should want to close them"): no more
@@ -5720,8 +5943,8 @@ TOOLS = [
     {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). status: working = In progress, blocked = Blocked, review = Pending final review (the owner thinks it is done; James checks it and closes it or sends it back). The old color field still works (green/yellow = working, red = blocked). text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <status>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'status': {'type': 'string', 'enum': ['working', 'blocked', 'review']}, 'color': {'type': 'string', 'enum': ['working', 'blocked', 'review', 'green', 'yellow', 'red'], 'description': 'Old name for status (green/yellow = working, red = blocked).'}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['text']}},
     {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
-    {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
-    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, **ASKED}, 'required': ['decision', 'owner_request']}},
+    {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has. Pieces of one idea (same switch, or a 'Part of: <repo>#<n>' line) share idea (the root's id) and parts; counts and ideas count ideas, not pieces.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
+    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, **ASKED}, 'required': ['decision', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
