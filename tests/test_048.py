@@ -520,6 +520,7 @@ const asked = [];
 const smallBtn = (t, f) => { const b = make('button', 'bd-mini', t); b.go = f; return b; };
 const askPop = (b, text, yes) => asked.push([text, yes]);
 const noteAsk = (row, ph, yes) => asked.push([ph, yes]);
+const tryState = () => ({}), tryToggle = () => null;   // 0.48.1: these items have no switch
 """
         src = stub + fn('ideaOf') + fn('actionArea') + """
 const p = n => Array.from({length: n}, (_, k) => ({id: 'o/r#' + k, title: 't' + k}));
