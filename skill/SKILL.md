@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.45.1
+version: 0.46.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -27,7 +27,7 @@ Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`)
 - **The builder's tester is the only check.** The WizardOS Builder's independent tester (builder-verify, on its own machine) tries every change before it merges. There is no AI review after the merge (nothing runs it). Never ask a person to test, try or check something, and never write 'Human test:' steps.
 - **Bugs**: Open → Building → tested by the builder's tester → merged switched on → closed automatically by the builder. Doesn't work / Still broken or reopening sends it back to Building.
 - **App features** (any repo not in `/api/policy` `core_repos`): no person in the loop. Built switched on for everyone, tester, merge, closed automatically.
-- **Core-repo features** (wizard-os, wizard-ux, wizard-app-manager, wizard-agent-service, try-wizard): built behind an off switch, tester, merge, then label `show-and-tell`: James says yes (`switch-default`, on for everyone, closes) or no (dropped, `switch-remove` cleanup). Show-and-tell is the only human step in the pipeline.
+- **Core-repo features** (wizard-os, wizard-ux, wizard-app-manager, wizard-agent-service, try-wizard): built behind an off switch, tester, merge, then label `show-and-tell`: James says yes (`switch-default`, on for everyone, closes) or no (dropped, `switch-remove` cleanup). The pipeline has exactly two human steps: Pending approval (Feedback app reports from outside the team; a team member approves or declines) and Show-and-tell. Everything else is automatic.
 - **Goals**: unchanged, human-led by James.
 - The builder parks only real decisions (`builder:blocked`) and rechecks them every 10 minutes.
 - Works / Needs changes / Still broken stay in the Tracker as an optional way for anyone on the team to send something back; they are never a step someone must do, and tested items never count as anyone's turn.
