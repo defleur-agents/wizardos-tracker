@@ -443,6 +443,7 @@ function render(d) {
   const order = SORT_FN[sortBy[d.view]];
   if (goals) { if (el('human-n')) el('human-n').hidden = true; return renderGoals(d, keep, order); }
   const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
+  groups.show = onePerIdea(groups.show);   // 0.48.0: the pieces of one idea are one card (and count once)
   for (const i of groups.test) i.nextrel = comingNext(i);
   groups.nextrel = groups.test.filter(i => i.nextrel);
   groups.test = groups.test.filter(i => !i.nextrel);
@@ -1667,9 +1668,11 @@ function itemCard(i) {
   const wh = waitHead(i);
   if (wh) c.append(wh);
   const top = make('div', 'bd-card-top');
-  const h = tapTarget('bd-title', () => openDetail(i)); h.textContent = i.title;
+  const idea = ideaOf(i);   // 0.48.0: an idea of several pieces: the root's title, pitch and pictures; null otherwise
+  const h = tapTarget('bd-title', () => idea ? openPart(idea.root) : openDetail(i)); h.textContent = idea ? idea.title : i.title;
   top.append(h); c.append(top);
   if (i.group === 'show') c.append(...showTell(i));   // 0.47.0
+  if (idea) c.append(partsLine(i));
   const fb = window.FeedbackStage && FeedbackStage.chip(i);   // 0.26.5: label from-feedback
   if (fb) c.insertBefore(fb, top);
   if (i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'))) {   // 0.37.0
@@ -1689,14 +1692,58 @@ function itemCard(i) {
   if (act) c.append(act);
   onceOnly(c, 'Not released yet');
   const when_ = i.group === 'done' || i.group === 'shipping' && i.closed_at ? (i.closed_at ? 'closed ' + when(i.closed_at) : '') : age(i.created_at);
-  c.append(make('p', 'bd-hint', [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_].filter(Boolean).join(' · ')));
+  const lead = idea && idea.root.id !== i.id ? idea.root : null;   // 0.48.0: the idea's root is in another tab
+  c.append(make('p', 'bd-hint', (lead ? [`${repoName(lead.repo)} #${lead.number}`] : [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_]).filter(Boolean).join(' · ')));
   return c;
+}
+// 0.48.0 (Miguel, 21 Nov): one idea, one card, one yes or no. The builder splits an idea into pieces across repos; the
+// server joins the show-and-tell pieces of one idea (same switch, or a 'Part of:' line) and every piece carries `idea`
+// (the root's id), `parts` and, when there are several, `idea_show` (the root's title, pitch and pictures).
+function onePerIdea(list) {
+  const at = new Map(), out = [];
+  for (const i of list || []) {
+    const k = (i.group === 'show' && i.idea) || i.id;
+    if (!at.has(k)) { at.set(k, out.length); out.push(i); }
+    else if (i.id === k) out[at.get(k)] = i;   // the root itself, when this list has it
+  }
+  return out;
+}
+function ideaOf(i) {
+  if (!i || i.group !== 'show' || !Array.isArray(i.parts) || i.parts.length < 2) return null;
+  const s = i.idea_show || {};
+  return { root: i.parts[0], title: s.title || i.parts[0].title || i.title, pitch: s.pitch, before: s.before, after: s.after };
+}
+const sameIdea = (x, i) => x.id === i.id || (x.group === 'show' && i.group === 'show' && !!i.idea && x.idea === i.idea);
+const partsOpen = new Set();   // ideas whose list of parts is open (kept through repaints)
+function partsLine(i) {
+  const n = i.parts.length, w = make('div', 'bd-parts');
+  const b = make('button', 'bd-parts-b', `${n} parts`); b.type = 'button';
+  const ul = make('ul', 'bd-parts-l');
+  for (const p of i.parts) {
+    const li = make('li'), t = tapTarget('bd-part', () => openPart(p));
+    t.textContent = p.title;
+    li.append(t, make('span', 'bd-part-r', `${repoName(p.repo)} #${p.number}`)); ul.append(li);
+  }
+  const set = on => { ul.hidden = !on; b.setAttribute('aria-expanded', String(on)); };
+  set(partsOpen.has(i.idea));
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); const on = ul.hidden; partsOpen[on ? 'add' : 'delete'](i.idea); set(on); };
+  w.append(b, ul);
+  return w;
+}
+// A piece's own detail, as its card opens it; a piece in another tab is read first
+async function openPart(p) {
+  const hit = cardsOf(p.id)[0];
+  if (hit) return openDetail(hit);
+  try { openDetail(await api(`api/issue?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)); }
+  catch (err) { say(`Couldn’t open ${p.id}: ${err.message}`, 'error'); }
 }
 // 0.47.0 (Miguel, 21 Nov): what a show-and-tell card asks a yes or no for, on the card: the builder's pitch, then its
 // screenshots (After first, then Before). The pictures come through the Tracker (api/shot); one that does not load
 // takes itself away. A card with neither looks as before.
 const shotGone = new Set();
 function showTell(i) {
+  i = ideaOf(i) || i;   // 0.48.0: an idea of several pieces shows its root's pitch and pictures
   const out = [];
   if (i.pitch) out.push(make('p', 'bd-pitch', i.pitch));
   const row = make('div', 'bd-thumbs');
@@ -1925,9 +1972,10 @@ function actionArea(i, inDetail) {
   // 0.45.0 (Miguel, 21 Nov): no pre-build approval exists any more (policy core_approval_not_needed_since): no buttons
   if (g === 'show') {   // 0.45.0: Approve / Decline for the decider only; everyone else just sees who decides
     if (!i.can_decide) { row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return row; }
-    const yes = smallBtn('Approve', b => askPop(b, 'Approve? The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
+    const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
+    const yes = smallBtn('Approve', b => askPop(b, (n > 1 ? `Approve all ${n} parts?` : 'Approve?') + ' The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
     yes.classList.add('bd-mini-go');
-    const no = smallBtn('Decline', () => noteAsk(row, 'Why not? (optional)', 'Decline', note => decideAct(i, 'no', note)));
+    const no = smallBtn('Decline', () => noteAsk(row, 'Why not? (optional)', n > 1 ? `Decline all ${n} parts` : 'Decline', note => decideAct(i, 'no', note)));
     row.append(yes, no); return row;
   }
   return null;
@@ -2211,21 +2259,26 @@ async function notDupe(i, b) {
 async function decideAct(i, decision, note) {
   hold(false);
   const took = [];
+  const ids = new Set([i.id]);
   for (const d of Object.values(cache)) if (d && d.groups) for (const g of Object.keys(d.groups)) {
-    const k = (d.groups[g] || []).findIndex(x => x.id === i.id);
-    if (k >= 0) { took.push([d, g, k, d.groups[g][k]]); d.groups[g].splice(k, 1); if (d.counts) d.counts[g] = d.groups[g].length; }
+    // 0.48.0: every piece of the idea leaves with it
+    for (let k; (k = (d.groups[g] || []).findIndex(x => sameIdea(x, i))) >= 0;) { ids.add(d.groups[g][k].id); took.push([d, g, k, d.groups[g][k]]); d.groups[g].splice(k, 1); if (d.counts) d.counts[g] = onePerIdea(d.groups[g]).length; }
   }
-  details.delete(i.id);
-  if (el('detail').open && openId === i.id) WzSheet.close(el('detail'));
+  for (const id of ids) details.delete(id);
+  if (el('detail').open && ids.has(openId)) WzSheet.close(el('detail'));
   const paint = () => { if (cache[view]) render(cache[view]); meBadge(); };
   paint();
   try {
-    await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined });
-    toast(decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
+    const r = await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined });
+    const bad = new Set(((r && r.parts) || []).filter(p => !p.ok && !p.skipped).map(p => p.id));
+    if (bad.size) {   // 0.48.0: GitHub refused some parts: those come back, and the line says how many
+      for (const [d, g, k, x] of took.reverse()) if (bad.has(x.id)) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = onePerIdea(d.groups[g]).length; }
+      paint(); say(`Couldn’t save that: ${bad.size} of ${r.parts.length} parts could not be updated.`, 'error');
+    } else toast(decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
     needsBadge();
     return true;
   } catch (err) {
-    if (err.status !== 409) for (const [d, g, k, x] of took.reverse()) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = d.groups[g].length; }
+    if (err.status !== 409) for (const [d, g, k, x] of took.reverse()) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = onePerIdea(d.groups[g]).length; }
     paint(); say(`Couldn’t save that: ${err.message}`, 'error');
     return false;
   }
@@ -3506,7 +3559,7 @@ function meItems() {
   const seen = new Set(), out = [];
   for (const v of ['goals', ...VIEWS.filter(x => x !== 'goals')]) for (const l of Object.values((cache[v] || {}).groups || {})) for (const i of l || [])
     if (i && !seen.has(i.id) && myTurn(i)) { seen.add(i.id); out.push(i); }
-  return out;
+  return onePerIdea(out);   // 0.48.0: an idea of several pieces waits once
 }
 const ME_KINDS = [['approve', 'To approve'], ['answer', 'Questions for you'], ['goals', 'Goals needing a status']];
 const meKind = i => i.group === 'show' ? 'approve' : i.group === 'answer' ? 'answer' : 'goals';
@@ -3570,7 +3623,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.47.0';
+const PAGE_VERSION = '0.48.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3653,7 +3706,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.47.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.48.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

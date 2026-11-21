@@ -286,7 +286,7 @@ class Board(unittest.TestCase):
         d = S.decisions('m', {'for': 'all'})
         one = next(i for i in d['items'] if i['number'] == 1)
         self.assertEqual(sorted(one), sorted(['id', 'repo', 'number', 'title', 'url', 'category', 'decider', 'opener', 'created_at', 'switch',
-                                              'pitch', 'before', 'after', 'can_decide']))
+                                              'pitch', 'before', 'after', 'can_decide', 'idea', 'parts']))   # 0.48.0: + idea, parts
         self.assertEqual(one['after'], [BLOB, 'https://github.com/user-attachments/assets/1b2c3d4e'])
 
 

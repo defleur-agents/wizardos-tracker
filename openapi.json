@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.47.0",
+    "version": "0.48.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1857,7 +1857,7 @@
     },
     "/api/decisions": {
       "get": {
-        "summary": "0.45.0: kept for agents and scripts (the page no longer has a Your decisions section). Open show-and-tell features whose decider is the signed-in person (James for core repos, the filer for app repos; an agent's filing -> its person; the builder bot's -> the linked item's filer, else Miguel). ?for=<name>|all, ?refresh=1. Returns {me, for, count, items: [{id, repo, number, title, url, category, decider, opener, pitch, before, after, switch, can_decide}], counts: {person: n}, total}.",
+        "summary": "0.45.0: kept for agents and scripts (the page no longer has a Your decisions section). Open show-and-tell features whose decider is the signed-in person (James for core repos, the filer for app repos; an agent's filing -> its person; the builder bot's -> the linked item's filer, else Miguel). ?for=<name>|all, ?refresh=1. Returns {me, for, count, items: [{id, repo, number, title, url, category, decider, opener, pitch, before, after, switch, can_decide}], counts: {person: n}, total}. 0.48.0: pieces of one idea (same switch, or a 'Part of: <repo>#<n>' line naming another show-and-tell item) share idea (the root's id), parts (ids, root first) and the idea's decider; counts and ideas count ideas, not pieces.",
         "parameters": [
           {
             "name": "for",
@@ -1886,7 +1886,7 @@
     },
     "/api/decide": {
       "post": {
-        "summary": "0.45.0 Approve / Decline at a show-and-tell (the card's buttons). Body {repo, number, decision: approve|decline (or yes|no), note?}. Only the item's decider (or their agent via MCP board_decide). Labels are created in the repo when missing and set before the comment; a GitHub refusal answers with the label and repo named. The item leaves every board answer and Waiting on me at once. Approve: approved + switch-default, show-and-tell removed (the builder turns it on for everyone and closes it). Decline: comment with the reason, label dropped (+ switch-cleanup when merged behind a switch), stage labels removed, closed as not planned.",
+        "summary": "0.45.0 Approve / Decline at a show-and-tell (the card's buttons). Body {repo, number, decision: approve|decline (or yes|no), note?}. Only the item's decider (or their agent via MCP board_decide). Labels are created in the repo when missing and set before the comment; a GitHub refusal answers with the label and repo named. The item leaves every board answer and Waiting on me at once. Approve: approved + switch-default, show-and-tell removed (the builder turns it on for everyone and closes it). Decline: comment with the reason, label dropped (+ switch-cleanup when merged behind a switch), stage labels removed, closed as not planned. 0.48.0: deciding any part decides the whole idea (every item in its parts; the caller must be the idea's decider); the answer adds idea, parts: [{id, ok, error?}] and failed, and a retry is safe.",
         "requestBody": {
           "content": {
             "application/json": {
