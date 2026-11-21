@@ -137,6 +137,21 @@ console.log(JSON.stringify([myTurn({group: 'test', can_review: true}), myTurn({g
         self.assertIn("'Still broken'", JS)
 
 
+class Bundle(unittest.TestCase):
+    def test_shipped_bundle_is_this_source(self):
+        # 0.43.0: the first 0.43.0 merge shipped the 0.42.0 bundle (compose not repacked); the compose's inline files
+        # must equal the checked-in sources
+        import base64
+        import zlib
+        import yaml
+        cmd = yaml.safe_load((ROOT / 'runtipi' / 'docker-compose.yml').read_text())['services']['wizardos-tracker']['command']
+        files = json.loads(zlib.decompress(base64.b64decode(''.join(cmd[3:]))))
+        self.assertIn('app/server.py', files)
+        for name, text in files.items():
+            self.assertEqual(text, (ROOT / name).read_text(), name)
+        self.assertTrue(all(len(x) <= 100000 for x in cmd[3:]))
+
+
 class Version(unittest.TestCase):
     def test_version(self):
         self.assertEqual(S.VERSION, '0.43.0')
