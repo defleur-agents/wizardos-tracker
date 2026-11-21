@@ -62,6 +62,7 @@ class Source(unittest.TestCase):
         self.assertIn('id="human-n"', HTML)
         self.assertIn("humanChip('Pending approval')", FB)
         self.assertIn('--bd-human: var(--bd-warn)', CSS)
+        self.assertIn('.bd-dbin .bd-human-w { display: none; }', CSS)   # 0.46.1: icon only in the narrow pop-up steps
 
     def test_style_rules(self):
         new = CSS[CSS.index('/* 0.46.0'):]

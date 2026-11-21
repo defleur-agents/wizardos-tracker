@@ -1094,6 +1094,9 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-dbin.bd-human .bd-dbin-w, .bd-dbin.bd-human .bd-dbin-v { color: var(--bd-human); }
 .bd-dbin.bd-human.cur { border-color: var(--bd-human); box-shadow: inset 0 0 0 1px var(--bd-human); }
 .bd-dbin.bd-human.dim { opacity: .7; }
+/* 0.46.1: the pop-up's steps are narrow on a phone: the person icon alone (the step's title and aria-label say Human step) */
+.bd-dbin .bd-human-w { display: none; }
+.bd-dbin .bd-human-tag { font-size: .7rem; }
 .bd-human-n { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: calc(-1 * var(--wz-space-2)) 0 var(--wz-space-3); padding: 0 4px; font-size: var(--wz-text-sm); }
 .bd-human-n[hidden] { display: none; }
 .bd-human-n > .bd-human-tag { font-size: .66rem; }
