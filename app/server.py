@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.43.2'
+VERSION = '0.44.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2722,7 +2722,7 @@ def waiting_on(card, base=None):
     elif g == 'james':
         who = [str(n) for n in base.get('core_approvers') or POLICY_DEFAULT['core_approvers']]
     elif g == 'show':
-        who = [t['name'] for t in base['team'] if t['name'].lower() in james_people(base)] or ['James']
+        who = [card['decider']] if card.get('decider') else ([t['name'] for t in base['team'] if t['name'].lower() in james_people(base)] or ['James'])
     elif g == 'airev':
         r = card.get('ai_reviewer') or 'any team agent'
         agents = [a['name'] for tm in base['team'] for a in tm['agents']]
@@ -3006,9 +3006,12 @@ def board_split(person, args):
         elif group == 'james':   # 0.18.2: James or Miguel approve core features; show-and-tell stays James's
             extra = {'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
         elif group == 'show':
-            # 0.38.3 (Miguel, 18 Nov): anyone on the team may press 'James approved' during the show-and-tell (internal
-            # tool, they click it on James's behalf with his OK); it stays James's turn for 'Your turn first' and Needs you.
-            extra = {'can_james': True, 'james_rule': '', 'turn': james}
+            # 0.44.0 (Miguel, 21 Nov): every feature has one decider (James for core repos, the filer for apps); it is their
+            # turn. The old 'James approved' button stays for core cards only (0.38.3: anyone may press it for James).
+            dec = show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
+            mine_dec = bool(login) and dec.lower() == person_of(login, base).lower()
+            extra = {'decider': dec, 'can_decide': mine_dec and on_team(login, base), 'can_james': cat == 'core', 'james_rule': '',
+                     'turn': mine_dec}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
             if cat == 'bug':
@@ -3102,7 +3105,7 @@ def needs_you_split(splits):
     - answer (builder question): asked of the viewer's person;
     - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
       Miguel's badge never counts James's approvals of other people's ideas;
-    - show   (show-and-tell): James only (anyone may press 'James approved', but it is his turn);
+    - show   (show-and-tell): its decider (0.44.0: James for core repos, the person who filed it for app repos);
     - goals: the viewer owns it and its status is missing or stale; 0.38.0: a goal Pending final review counts for
       James (who closes goals: 'Goal says it is done: check and close it') and not for its owners.
     0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
@@ -3119,7 +3122,7 @@ def needs_you_split(splits):
                     why = 'Builder asked you a question'
                 elif g == 'james' and turn and (james or mine):
                     why = 'Approve your idea' if mine else 'Approve this core feature'
-                elif g == 'show' and turn and james:
+                elif g == 'show' and turn:   # 0.44.0: the card's decider (James for core, the filer for apps)
                     why = 'Show-and-tell for you'
                 elif g == 'goals' and turn:
                     why = c.get('turn_why') or 'Your goal needs a status'
@@ -3558,6 +3561,10 @@ POLICY_DEFAULT = {
     # 0.37.0 (Miguel, 17 Nov): who may file a UX tweak (team names). A UX tweak is a feature with a fast lane: it is
     # approved on filing (no James approval) and skips show-and-tell. DATA_DIR/policy.json `ux_tweakers` overrides.
     'ux_tweakers': ['Robert'],
+    # 0.44.0 (Miguel, 21 Nov 2026): every feature gets one show-and-tell. core: who decides core-repo features (also
+    # their own); apps: the person who filed it (an agent's filing -> its person). default: an app feature filed by the
+    # builder bot whose linked item has no team filer. DATA_DIR/policy.json `show_deciders` overrides.
+    'show_deciders': {'core': 'James', 'apps': 'filer', 'default': 'Miguel'},
     # 0.35.0: who cuts a Mac build and signs a phone release (team names): a Human review item that needs one waits on them
     'release_people': {'mac': ['James'], 'phone': ['James']},
 }
@@ -3592,22 +3599,22 @@ def _targets(over):
     return out
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once every done-list item is ticked. Nobody else adds or closes a goal.',
-             'features': 'Anyone on the team, or their own agent, opens a feature. The builder closes it after its tester passed it (core-repo features: after James says yes at the show-and-tell).',
+             'features': 'Anyone on the team, or their own agent, opens a feature. It closes after one yes at its show-and-tell (James for core-repo features, the person who filed it for app features).',
              'bugs': 'Anyone on the team, or their own agent, opens a bug. The builder closes it after its tester passed the fix.'},
     'build': {'bugs': 'The WizardOS Builder writes the fix, switched on (no feature switch).',
-              'features': ('The WizardOS Builder writes the change: app features switched on for everyone; core-repo features '
-                           '(wizard-os, wizard-ux, wizard-app-manager, wizard-agent-service, try-wizard) behind an off switch.'),
+              'features': 'The WizardOS Builder writes the change behind an off switch (every repo, core and app).',
               'goals': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.'},
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue (for a goal: that the slice moves its next done-list item forward): pass to Human review, or back to Building.",
     # 0.43.0 (Miguel, 21 Nov 2026): no person tests anything. The builder's independent tester (builder-verify, on its own
     # machine) tries every change before it merges; there is no AI review after the merge (nothing runs it).
     'tester': {'bugs': ("The WizardOS Builder's tester tries the fix on its own machine before it merges. Passed: merged switched on "
                         "and closed automatically. Failed: back to Building. Nobody tests it by hand."),
-               'features': ("The WizardOS Builder's tester tries it on its own machine before it merges. App features: merged switched on "
-                            "for everyone and closed automatically. Core-repo features: merged behind their switch, then Show-and-tell. "
-                            "Failed: back to Building. Nobody tests it by hand.")},
-    'show': ("Core-repo features only, the one human step: James sees it at the show-and-tell and says yes (its switch is "
-             "turned on for everyone and it closes) or no (dropped; the builder removes the switch and its code)."),
+               'features': ("The WizardOS Builder's tester tries it on its own machine before it merges. Passed: merged switched "
+                            "off, then Show-and-tell. Failed: back to Building. Nobody tests it by hand.")},
+    'show': ("Every feature, the one human step: one person says yes (the builder turns it on for everyone and closes it) "
+             "or no (dropped; the builder removes the switch and its code). Core-repo features: James decides (also his own). "
+             "App features: the person who filed it (an agent's filing: its person; filed by the builder: whoever filed the "
+             "item it links, else Miguel). It is the first thing they see in the Tracker: Your decisions."),
     'review': {'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
@@ -3706,11 +3713,14 @@ def policy_base():
     ux = over.get('ux_tweakers')
     ux = [str(x) for x in ux if isinstance(x, str) and x.strip()] if isinstance(ux, list) else list(POLICY_DEFAULT['ux_tweakers'])
     rp = {k: list(v) for k, v in POLICY_DEFAULT['release_people'].items()}
+    sd = dict(POLICY_DEFAULT['show_deciders'])
+    if isinstance(over.get('show_deciders'), dict):
+        sd.update({k: str(v).strip()[:40] for k, v in over['show_deciders'].items() if k in ('core', 'default') and isinstance(v, str) and v.strip()})
     if isinstance(over.get('release_people'), dict):
         rp.update({k: [str(x) for x in v if isinstance(x, str) and x.strip()] for k, v in over['release_people'].items()
                    if k in rp and isinstance(v, list)})
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
-            'core_approvers': ca, 'release_people': rp, 'ux_tweakers': ux,
+            'core_approvers': ca, 'release_people': rp, 'ux_tweakers': ux, 'show_deciders': sd,
             'since': _since(over.get('since'))[0],
             'core_approval_not_needed_since': _cutover(over.get('core_approval_not_needed_since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
@@ -3834,18 +3844,21 @@ def steps_for(view, base=None):
          'about': STEP_TEXT['build'][view], 'next': 'AI review (label ai-review).' if view == 'goals' else "The builder's tester tries it before it merges."},
     ]
     if view != 'goals':
-        # 0.43.0 (Miguel, 21 Nov 2026): Open -> Building -> Tester -> merged -> closed automatically; core-repo features
-        # add Show-and-tell (James), the only human step. Doesn't work / reopen still sends it back to Building.
+        # 0.43.0 (Miguel, 21 Nov 2026): Open -> Building -> Tester -> merged -> closed automatically for bugs. 0.44.0: every
+        # feature then has Show-and-tell (James for core repos, the filer for apps), the only human step.
         tester = {'key': 'tester', 'n': 3, 'name': 'Tester', 'group': 'test', 'label': HUMAN_LABEL, 'count_label': 'Tested',
                   'role': f"{base['builder']['name']}'s tester", 'who': builder_who, 'person': False,
                   'about': STEP_TEXT['tester'][view],
                   'next': ('Passed: merged switched on and closed by the builder. Failed: back to Building.' if view == 'bugs'
-                           else 'Passed: merged. App features close automatically; core-repo features go to Show-and-tell. Failed: back to Building.')}
+                           else 'Passed: merged switched off, then Show-and-tell. Failed: back to Building.')}
         out = first + [tester]
         if view == 'features':
+            sd = base['show_deciders']
             out.append({'key': 'show', 'n': 4, 'name': 'Show-and-tell', 'group': 'show', 'label': SHOW_LABEL, 'count_label': 'Show-and-tell',
-                        'role': 'James', 'who': [_who(t) for t in base['team'] if t['name'].lower() == 'james'], 'person': True,
-                        'only': 'core_repos', 'about': STEP_TEXT['show'],
+                        'role': f"{sd['core']} (core repos) · the filer (apps)",
+                        'who': [_who(t) for t in base['team'] if t['name'].lower() == sd['core'].lower()], 'person': True,
+                        'only': None, 'deciders': {'core': sd['core'], 'apps': 'filer', 'builder_filed': f"filer of the linked item, else {sd['default']}"},
+                        'about': STEP_TEXT['show'],
                         'next': 'Yes: switch-default, on for everyone, closed. No: dropped, then switch-remove cleanup.'})
         return out
     return first + [
@@ -3874,11 +3887,13 @@ def policy(person=None):
              f"Build: {base['builder']['name']} only · Testing: the builder's own tester, before merge (no person tests anything; "
              f"no AI review after the merge) · Core features: no approval before building when filed since "
              f"{base['core_approval_not_needed_since']} (older ones: James or Miguel approves first)",
-             "App features (repos outside core_repos): built switched on for everyone, tested by the builder's tester, merged, "
-             "closed automatically. No person in the loop.",
-             "Core-repo features: built behind an off switch, tested by the builder's tester, merged, then Show-and-tell: James "
-             "says yes (on for everyone, closed) or no (dropped, switch removed). Show-and-tell is the only human step "
-             "(anyone may mark it James approved)",
+             "Features (every repo): built behind an off switch, tested by the builder's tester, merged switched off, label "
+             "show-and-tell. Exactly one person says yes (switch-default: on for everyone, closed) or no (dropped, switch removed). "
+             "Show-and-tell is the only human step anywhere",
+             f"Show-and-tell decider: core repos -> {base['show_deciders']['core']} (also for his own features); app repos -> the "
+             f"person who filed it (an agent's filing belongs to its person, team[].agents); filed by the builder -> whoever filed "
+             f"the item it links, else {base['show_deciders']['default']}. Yes/no in Your decisions (top of the Tracker), "
+             "POST /api/decide or MCP board_decide (the decider or their agent only)",
              "Duplicates: a new feature that looks like an open feature or bug gets one 'Possible duplicate of' comment and label possible-duplicate; "
              "the builder skips it until a team member comments or taps Not a duplicate",
              "Bugs (Miguel, 21 Nov): Open, Building, tested by the builder's tester before merge, merged switched on, closed "
@@ -3906,10 +3921,16 @@ def policy(person=None):
                                            'hand_back': HUMAN_LABEL, 'closed_by': 'builder', 'filer_check': None, 'ai_review': None,
                                            'auto_accept_seconds': None, 'reopen': "Doesn't work or reopening sends it back to Building"},
                               'feature_flow': {'tested_by': 'builder tester (before merge)', 'hand_back': HUMAN_LABEL, 'ai_review': None,
-                                               'app': {'switch': 'on for everyone', 'closed_by': 'builder', 'person': None},
-                                               'core': {'switch': 'off until James says yes', 'then': SHOW_LABEL, 'person': 'James',
-                                                        'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove'}},
-                              'human_steps': ['show-and-tell (core-repo features, James)'],
+                                               'app': {'switch': 'off until the filer says yes', 'then': SHOW_LABEL, 'person': 'filer',
+                                                       'decider': 'the person who filed it (agent -> its person; builder bot -> '
+                                                                  f"the linked item's filer, else {base['show_deciders']['default']})",
+                                                       'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove', 'closed_by': 'builder'},
+                                               'core': {'switch': f"off until {base['show_deciders']['core']} says yes", 'then': SHOW_LABEL,
+                                                        'person': base['show_deciders']['core'], 'decider': base['show_deciders']['core'],
+                                                        'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove', 'closed_by': 'builder'},
+                                               'decide': {'api': 'POST /api/decide {repo, number, decision: yes|no, note}',
+                                                          'mcp': 'board_decide', 'queue': 'GET /api/decisions'}},
+                              'human_steps': [f"show-and-tell (every feature: {base['show_deciders']['core']} for core repos, the filer for app repos)"],
                               'blocked': {'label': BLOCKED_LABEL, 'only_for': 'real decisions', 'recheck_seconds': 600}},
             'editable_file': 'DATA_DIR/policy.json'}
 
@@ -4851,6 +4872,249 @@ def drop_item(person, args, agent=False):
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'kind': cat, 'label': label, 'cleanup': cleanup,
             'labels': _labels(after), 'state': after.get('state'), 'by': who, 'saved': True}
 
+# ---------- 0.44.0 (Miguel, 21 Nov 2026): every feature gets ONE show-and-tell; Your decisions on top ----------
+# Features in every repo are built behind an off switch, tried by the builder's tester, merged switched off and labelled
+# show-and-tell. Exactly one person says yes or no. The decider: core repos (policy core_repos) -> James (also for his
+# own features); app repos -> the person who filed it (an agent's filing belongs to its person, policy team[].agents);
+# filed by the builder bot -> the person who filed the item its body links to (Refs / Follow-up of / Split from), else
+# Miguel (policy show_deciders.default). Yes = switch-default (the builder turns it on for everyone and closes it; with
+# no switch at all the Tracker closes it at once). No = closed not planned with label dropped (+ switch-cleanup, so the
+# builder's dropped sweep files the switch-remove cleanup).
+LINK_REF = re.compile(r'(?:https://github\.com/([\w.-]+)/([\w.-]+)/(?:issues|pull)/(\d+))|(?:(?<![\w./-])([\w.-]+)/([\w.-]+))?#(\d+)\b')
+DECIDE_SECONDS = 60
+_authors = {}      # 'owner/repo#n' -> (author login, body): who filed a linked item (never changes; body rarely)
+_decide_cache = {}  # token id -> (at, items)
+_decided = {}      # 'owner/repo#n' -> time a yes/no was sent here (hidden from the queue while GitHub search catches up)
+
+
+def linked_ref(repo, body, number=None, org=None):
+    """The first other item a builder-filed issue links to (Refs / Follow-up of / Split from) -> 'owner/repo#n' or
+    None. A bare `#12` means the same repo; links outside the org and the item itself are skipped."""
+    org = (org or (repo or '').split('/')[0]).lower()
+    for m in LINK_REF.finditer(body or ''):
+        if m.group(3):
+            full, n = f'{m.group(1)}/{m.group(2)}', m.group(3)
+        else:
+            full = f'{m.group(4)}/{m.group(5)}' if m.group(4) and m.group(5) else repo
+            n = m.group(6)
+        if not full or '/' not in full or full.split('/')[0].lower() != org:
+            continue
+        if number is not None and full.lower() == (repo or '').lower() and int(n) == int(number):
+            continue
+        return f'{full}#{int(n)}'
+    return None
+
+
+def is_builder_login(login, base=None):
+    low = (login or '').lower()
+    return bool(low) and (low in BUILDERS or low in {x.lower() for x in (base or policy_base())['builder']['logins']})
+
+
+def filer_person(repo, author, body=None, base=None, author_of=None, depth=0):
+    """The team person behind an item: a person's own login or one of their agents -> that person; the builder bot ->
+    the person who filed the item it links to (a refiled copy's 'Filed by @x' line first); else None."""
+    base = base or policy_base()
+    if is_builder_login(author, base):
+        m = REFILED.search(body or '')
+        if m:
+            return filer_person(repo, m.group(1), None, base, None, depth + 1)
+        ref = linked_ref(repo, body)
+        if ref and author_of and depth < 4:
+            got = author_of(ref)
+            if got:
+                r_repo = ref.split('#')[0]
+                return filer_person(r_repo, got[0], got[1], base, author_of, depth + 1)
+        return None
+    return person_of(author, base) if on_team(author, base) else None
+
+
+def show_decider(repo, author, body=None, base=None, author_of=None):
+    """Who says yes or no at this feature's show-and-tell (a team name)."""
+    base = base or policy_base()
+    sd = base.get('show_deciders') or POLICY_DEFAULT['show_deciders']
+    if is_core(repo, base):
+        return sd['core']
+    return filer_person(repo, author, body, base, author_of) or sd['default']
+
+
+def _author_lookup(acct):
+    """author_of(ref) for filer_person: GitHub REST, remembered for the process (an item's author never changes)."""
+    def look(ref):
+        if ref in _authors:
+            return _authors[ref]
+        full, _, n = ref.partition('#')
+        try:
+            cur = gh(acct['token'], 'GET', f'/repos/{full}/issues/{int(n)}')
+        except (Problem, ValueError):
+            return None
+        got = (((cur.get('user') or {}).get('login') or ''), cur.get('body') or '')
+        _authors[ref] = got
+        return got
+    return look
+
+
+SHOW_SECTION = re.compile(r'(?im)^[\s>*_#-]*show[- ]and[- ]tell\s*[*_]*\s*:[*_\s]*')
+SHOT_ROW = re.compile(r'(?im)^[\s>*_`-]*(before|after)\s*[*_`]*\s*:(.*)$')
+STOP_ROW = re.compile(r'(?im)^[\s>*_`-]*(before|after|switch|tested|merged|what changed|what is left|left)\s*[*_`]*\s*:')
+
+
+def show_pitch(builder_bodies, issue_body=None):
+    """The decider's card: {pitch, before: [urls], after: [urls]}. The pitch is the builder's newest `Show-and-tell:`
+    section (plain words, about two lines), else the first sentences of its 'What changed', else the issue's first line."""
+    bodies = [b for b in reversed([b for b in builder_bodies or [] if isinstance(b, str)])]
+    pitch, src = '', None
+    for b in bodies:
+        m = SHOW_SECTION.search(b)
+        if m:
+            rest = b[m.end():]
+            stop = STOP_ROW.search(rest)
+            pitch, src = _say(rest[:stop.start()] if stop else rest, 240), b
+            break
+    if not pitch:
+        for b in bodies:
+            ch = _hand_sections(b).get('what changed')
+            if ch:
+                pitch, src = ' '.join(re.split(r'(?<=[.!?])\s+', _say(ch, 600))[:2])[:240], b
+                break
+    if not pitch:
+        pitch = describe(issue_body) or ''
+    shots = {'before': [], 'after': []}
+    for b in ([src] if src else []) + bodies:
+        for m in SHOT_ROW.finditer(b or ''):
+            for u in re.findall(r'https://[^\s)\]>"\']+', m.group(2)):
+                u = u.rstrip('.,;')
+                if u not in shots[m.group(1).lower()]:
+                    shots[m.group(1).lower()].append(u)
+        if shots['before'] or shots['after']:
+            break
+    pitch = pitch[:1].upper() + pitch[1:]
+    return {'pitch': pitch, 'before': shots['before'][:3], 'after': shots['after'][:3]}
+
+
+DECIDE_Q = 'label:"show-and-tell" -label:goal'
+
+
+def decisions(person, args=None, agent=False):
+    """GET /api/decisions -> {me, count, items}: the show-and-tell features the signed-in person decides (oldest first),
+    each {id, repo, number, title, url, category, decider, opener, pitch, before, after, switch}. ?for=<name> lists that
+    person's queue (read-only), ?for=all everyone's; `counts` is {person: n} for the whole team."""
+    args = args or {}
+    _, acct = account_for(person, agent)
+    base = policy_base()
+    login = acct.get('login') or ''
+    me = person_of(login, base)
+    org = settings()['org']
+    tid = _tid(acct['token'])
+    now = time.time()
+    hit = _decide_cache.get(tid)
+    if hit and now - hit[0] < DECIDE_SECONDS and not args.get('refresh'):
+        items = hit[1]
+    else:
+        nodes, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {DECIDE_Q} sort:created-asc', heavy=True, limit=200)
+        look = _author_lookup(acct)
+        items = []
+        for n in nodes:
+            repo = n['repository']['nameWithOwner']
+            names = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
+            if category(repo, names, base) in ('goal', 'bug'):
+                continue
+            author = (n.get('author') or {}).get('login') or ''
+            said = [c.get('body') or '' for c in (n.get('comments') or {}).get('nodes') or []
+                    if is_builder_login(((c.get('author') or {}).get('login') or ''), base)]
+            sw, how = switch_info(said, n.get('body'))
+            items.append({'id': f"{repo}#{n['number']}", 'repo': repo, 'number': n['number'], 'title': n.get('title'),
+                          'url': n.get('url'), 'category': 'core' if is_core(repo, base) else 'app',
+                          'decider': show_decider(repo, author, n.get('body'), base, look),
+                          'opener': filer_person(repo, author, n.get('body'), base, look) or person_of(author, base),
+                          'created_at': n.get('createdAt'), 'switch': sw or how, **show_pitch(said, n.get('body'))})
+        with LOCK:
+            _decide_cache[tid] = (now, items)
+    with LOCK:
+        gone = {k for k, t in _decided.items() if now - t < 10 * 60}
+    items = [i for i in items if i['id'] not in gone]
+    want = str(args.get('for') or me or '').strip()
+    counts = {}
+    for i in items:
+        counts[i['decider']] = counts.get(i['decider'], 0) + 1
+    mine = items if want.lower() == 'all' else [i for i in items if i['decider'].lower() == want.lower()]
+    mine = [{**i, 'can_decide': bool(me) and i['decider'].lower() == me.lower()} for i in mine]
+    return {'me': me, 'for': want, 'count': len(mine), 'items': mine, 'counts': counts, 'total': len(items)}
+
+
+def decide(person, args, agent=False):
+    """POST /api/decide {repo, number | issue, decision yes|no, note?} (MCP board_decide): the show-and-tell yes or no.
+    Only the item's decider (show_decider) or that person's agent. Yes: approved + switch-default (the builder turns it
+    on for everyone and closes it), or closed at once when the change has no switch. No: closed not planned with label
+    dropped, plus switch-cleanup when it is merged behind a switch (the builder's dropped sweep removes it)."""
+    if agent:
+        _owner_request(args, agent, 'say yes or no at a show-and-tell')
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    decision = str(args.get('decision') or '').strip().lower()
+    if decision not in ('yes', 'no'):
+        raise Problem(400, 'decision must be yes or no.')
+    raw = args.get('note')
+    note = re.sub(r'\s+', ' ', raw).strip()[:300] if isinstance(raw, str) else ''
+    login = acct.get('login') or ''
+    base = policy_base()
+    cur = _current(acct, full, number)
+    names = _labels(cur)
+    if (cur.get('state') or 'open') == 'closed' or SHOW_LABEL not in names:
+        raise Problem(409, 'This is not waiting for a yes or no any more. Refresh to see the latest.', 'not_show')
+    author = (cur.get('user') or {}).get('login') or ''
+    decider = show_decider(full, author, cur.get('body'), base, _author_lookup(acct))
+    me = person_of(login, base)
+    if not on_team(login, base) or me.lower() != decider.lower():
+        raise Problem(403, f'This one is {decider}\u2019s to decide' + (' (or their agent).' if not agent else ', not this agent\u2019s person.'), 'not_decider')
+    via = ''
+    if agent or filed_by_agent(login, base):
+        via = ' via ' + (next((a['name'] for t in base['team'] for a in t['agents'] if a['login'].lower() == login.lower()), '') or 'their agent')
+    rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
+    sw, how = switch_info([b for w, b in _comment_rows(rows) if is_builder_login(w, base)], cur.get('body'))
+    switched = bool(sw or how)
+    if decision == 'yes':
+        # Miguel, 21 Nov: Yes = switch-default (the builder turns it on for everyone and closes it)
+        body = f'Show-and-tell: yes \u2014 {me} (@{login}{via})' + (f'\n\n{note}' if note else '')
+        body += ('\n\nBuilder: turn it on for everyone (remove the switch, keep the switched-on behaviour), merge, then close this issue.'
+                 if switched else '\n\nBuilder: it has no switch; make sure it is on for everyone, then close this issue.')
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+        _ensure_label(acct, full, DEFAULT_LABEL, '0e8a16', 'Said yes at show-and-tell: the builder turns it on for everyone')
+        _add_label(acct, full, number, APPROVED_LABEL)
+        _add_label(acct, full, number, DEFAULT_LABEL)
+        _drop_label(acct, full, number, SHOW_LABEL)
+    else:
+        body = f'Show-and-tell: no \u2014 {me} (@{login}{via})' + (f'\n\nWhy: {note}' if note else '')
+        cleanup = switched
+        if cleanup:
+            body += ('\n\nBuilder: its code is merged behind its switch. Open a cleanup PR that removes the switch and '
+                     'its code (label switch-cleanup; the tick files the cleanup issue).')
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+        _ensure_label(acct, full, DROPPED_LABEL, 'cfd3d7', 'Dropped in the Tracker: not needed')
+        _add_label(acct, full, number, DROPPED_LABEL)
+        if cleanup:
+            _ensure_label(acct, full, CLEANUP_LABEL, 'c5def5', 'Dropped feature: the builder removes its switch and code')
+            _add_label(acct, full, number, CLEANUP_LABEL)
+        for lab in STAGE_LABELS:
+            if lab in names:
+                try:
+                    _drop_label(acct, full, number, lab)
+                except Problem:
+                    pass
+        _close(acct, full, number, 'not_planned')
+    after = _current(acct, full, number)
+    now = _labels(after)
+    if SHOW_LABEL in now:
+        raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
+    with LOCK:
+        _decided[f'{full}#{number}'] = time.time()
+        _stats.clear()
+        _ship.clear()
+        _needs.clear()
+    _forget(acct['token'])
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'decision': decision, 'decider': decider,
+            'switch_default': decision == 'yes', 'switch': switched, 'labels': now, 'state': after.get('state'),
+            'state_reason': after.get('state_reason'), 'saved': True}
+
 # ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: <status>', then the text ----------
 # 0.38.0 (Miguel, 18 Nov: "the goal of a goal is that the person doing the goal should want to close them"): no more
 # traffic lights that reward saying 'on track'. A goal is `working` (In progress, neutral), `blocked` (Blocked) or
@@ -5172,7 +5436,7 @@ TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed. The builder fixes it switched on, its tester tries the fix before merge, and the builder closes it; nobody tests it by hand.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
-    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. App features (repos outside core_repos) are built switched on for everyone, tried by the builder\'s own tester before merge and closed automatically; core-repo features are built behind an off switch, tested the same way, then James says yes or no at the show-and-tell. Nobody tests by hand. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
+    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. Every feature is built behind an off switch, tried by the builder\'s own tester before merge, merged switched off and goes to show-and-tell: James says yes or no for core-repo features, the person who filed it for app features (your filing is your person\'s to decide). Nobody tests by hand. Core features need no approval first. The answer lists possible_duplicates (open items that look the same) when there are any: tell your person.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['repo', 'title']}},
     {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where. A feature's answer lists possible_duplicates (open items that look the same) when there are any: tell your person.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}, 'ux_tweak': {'type': 'boolean', 'description': 'Feature only: file it as a UX tweak (fast lane: approved on filing, no James approval or show-and-tell). Only the people in /api/policy ux_tweakers (Robert) may; others are refused.'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
@@ -5184,11 +5448,13 @@ TOOLS = [
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
-    {'name': 'ai_review_pass', 'description': "AI REVIEW (legacy; agents only). Since 21 Nov 2026 nothing runs this step: the WizardOS Builder's own tester tries every change before it merges and the builder closes bugs and app features itself (core-repo features go to James's show-and-tell, the only human step). Use it only to move an old item still labelled ai-review on: ai-review -> ready-to-test with a short note saying what you checked. Never ask a person to test or try anything. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked (never steps for a person to test).'}}, 'required': ['note']}},
+    {'name': 'ai_review_pass', 'description': "AI REVIEW (legacy; agents only). Since 21 Nov 2026 nothing runs this step: the WizardOS Builder's own tester tries every change before it merges and the builder closes bugs itself and every feature goes to show-and-tell (James for core repos, the filer for apps: the only human step). Use it only to move an old item still labelled ai-review on: ai-review -> ready-to-test with a short note saying what you checked. Never ask a person to test or try anything. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked (never steps for a person to test).'}}, 'required': ['note']}},
     {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow. Legacy: nothing runs AI review since 21 Nov 2026 (the builder's tester checks before merge).", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). status: working = In progress, blocked = Blocked, review = Pending final review (the owner thinks it is done; James checks it and closes it or sends it back). The old color field still works (green/yellow = working, red = blocked). text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <status>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'status': {'type': 'string', 'enum': ['working', 'blocked', 'review']}, 'color': {'type': 'string', 'enum': ['working', 'blocked', 'review', 'green', 'yellow', 'red'], 'description': 'Old name for status (green/yellow = working, red = blocked).'}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['text']}},
     {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
+    {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
+    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, **ASKED}, 'required': ['decision', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -5203,6 +5469,8 @@ CALLS = {
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
     'board_drop': lambda a: drop_item(None, a, agent=True),
+    'decisions_list': lambda a: decisions(None, a, agent=True),
+    'board_decide': lambda a: decide(None, a, agent=True),
     'builder_status': lambda a: builder_status(),
     'builder_set': lambda a: builder_set(None, a, agent=True),
     'try_status': lambda a: try_status(None, agent=True),
@@ -5227,7 +5495,7 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': AGENT_UPDATE + 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
-                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) filed since /api/policy core_approval_not_needed_since go straight to the builder; older ones still wait for approval by James or Miguel (label james-approved). James says yes or no at the show-and-tell (any team member may press 'James approved' for him). "
+                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) filed since /api/policy core_approval_not_needed_since go straight to the builder; older ones still wait for approval by James or Miguel (label james-approved). Every feature then goes to one show-and-tell yes or no: James for core repos, the person who filed it for app repos (an agent's filing belongs to its person); see decisions_list and board_decide. "
                                  "Filing a feature runs a duplicate check: when the answer has possible_duplicates, tell your person (the item is labelled possible-duplicate and the builder waits until a team member comments or taps Not a duplicate). "
                                  "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set (working, blocked, or review when they think it is done); only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
@@ -5315,6 +5583,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, issue_detail(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/split':
                 return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/decisions':
+                return self.send(200, decisions(self.person(), {'refresh': q.get('refresh') == '1', 'for': q.get('for')}))
             if path == '/api/needs-you':
                 return self.send(200, needs_you(self.person(), {'refresh': q.get('refresh') == '1'}))
             if path == '/api/stats':
@@ -5410,6 +5680,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/not-duplicate': lambda: not_duplicate(who, body),
                 '/api/feedback/review': lambda: feedback_review(who, body),
                 '/api/show': lambda: show_and_tell(who, body),
+                '/api/decide': lambda: decide(who, body),
                 '/api/drop': lambda: drop_item(who, body),
                 '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
@@ -5455,7 +5726,7 @@ from urllib.parse import urlsplit as _sw_urlsplit
 SWITCHES = [
     {'id': 'needs-you-badge', 'name': 'Needs you badge',
      'description': "A number on the Tracker's app badge for what's actually waiting on you (builder questions for you, "
-                    "show-and-tell for James, your ideas to approve, your goals' status), and a notification when "
+                    "show-and-tell yes or no for you, your ideas to approve, your goals' status), and a notification when "
                     "something new waits on you.",
      'default': False, 'issues': ['humanitylabs-org/wizardos-tracker#87']},
 ]

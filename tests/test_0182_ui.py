@@ -28,7 +28,7 @@ class Sorts(unittest.TestCase):
     def test_my_turn(self):
         cases = [({'group': 'test', 'can_review': True}, False),   # 0.43.0: tested by the builder, nobody's turn ({'group': 'test', 'can_review': False}, False),
                  ({'group': 'james', 'can_james': True}, True), ({'group': 'james', 'can_james': False}, False),
-                 ({'group': 'show', 'can_james': True}, True), ({'group': 'building', 'can_james': True}, False),
+                 ({'group': 'show', 'turn': True}, True), ({'group': 'show', 'can_james': True}, False),   # 0.44.0: the decider's turn ({'group': 'building', 'can_james': True}, False),
                  ({'group': 'goals', 'category': 'goal', 'turn': True}, True), ({'group': 'goals', 'turn': False}, False),
                  ({'group': 'test', 'can_review': True, 'state': 'closed'}, False)]
         src = fn('myTurn') + '\nconsole.log(JSON.stringify(' + json.dumps([c for c, _ in cases]) + '.map(myTurn)));'

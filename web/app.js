@@ -59,12 +59,12 @@ const BINS = [
   { key: 'done', group: null, word: 'Done' },
 ];
 // 0.43.0 (Miguel, 21 Nov 2026): no person tests anything. The builder's own tester tries every change before it merges;
-// bugs and app features then close by themselves; core-repo features go to James's show-and-tell (the only human step).
+// bugs then close by themselves; 0.44.0: every feature goes to one show-and-tell (James for core repos, the filer for apps).
 const POP = {
   build: ['WizardOS Builder', 'Writes the code; its own tester tries it before it merges.'],
   ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
   review: ['WizardOS Builder’s tester', 'Tried by the builder’s tester before it merged. Nobody tests it by hand; Doesn’t work still sends it back to Building.'],
-  done: ['Closed', 'The builder closes bugs and app features once its tester passed them; core-repo features close after James says yes at the show-and-tell. Only James closes a goal, once its done-list is ticked.'],
+  done: ['Closed', 'The builder closes bugs once its tester passed them. Every feature closes after one yes at its show-and-tell (James for core repos, the person who filed it for apps). Only James closes a goal, once its done-list is ticked.'],
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
@@ -94,7 +94,8 @@ function myTurn(i) {
   if (!i || i.closed_at || i.state === 'closed') return false;
   if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
   if (i.group === 'test') return false;   // 0.43.0: the builder's tester already tried it; never a person's to-do
-  if (i.group === 'james' || i.group === 'show') return !!i.can_james;
+  if (i.group === 'show') return !!i.turn;   // 0.44.0: its decider (James for core, the filer for apps)
+  if (i.group === 'james') return !!i.can_james;
   if (i.group === 'answer') return !!i.turn;   // 0.28: the builder asked you a question
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
   return false;
@@ -621,7 +622,7 @@ function stageStat(v, key) {
     answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
     airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
     test: { t: 'review', help: 'Tested: the builder’s tester passed it → closed (or Show-and-tell)', xs: l => l.flatMap(i => i.review_rounds || []) },
-    show: { t: 'show', help: 'Show-and-tell: Works → James approves', xs: l => l.flatMap(i => i.show_rounds || []) },
+    show: { t: 'show', help: 'Show-and-tell: tested → yes or no (James for core, the filer for apps)', xs: l => l.flatMap(i => i.show_rounds || []) },
     shipping: { t: 'shipping', help: 'Shipping: closed → in a release for everyone', xs: l => l.map(i => gap(i.closed_at, i.everyone_at)) },
     relwait: { t: 'relwait', help: 'Merged: fix merged → in For testers', xs: l => l.map(i => gap(i.handoff_at, i.testers_at)) },
     testers: { t: 'testers', help: 'For testers: in For testers → in For everyone', xs: l => l.map(i => gap(i.testers_at, i.everyone_at)) },
@@ -758,10 +759,10 @@ const STAGE_INFO = {
   james: 'Older core features only: James or Miguel approves before the builder starts. New ones go straight to the builder.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Waiting for the WizardOS Builder to start. It then moves to Building.',
-  airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (closed, or Show-and-tell for a core feature). Nobody needs to do anything.',
+  airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (a bug closes, a feature goes to Show-and-tell). Nobody needs to do anything.',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in the reply box on the item (or Approve PR #N when it waits on a pull request): any team member’s reply puts it back in the builder’s queue within 10 minutes.',
-  test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs and app features close by themselves; a core-repo feature goes to James’s show-and-tell. Works / Needs changes stay here as an optional way to send it back to Building.',
-  show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
+  test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs close by themselves; every feature goes to one show-and-tell (James for core repos, the person who filed it for apps). Works / Needs changes stay here as an optional way to send it back to Building.',
+  show: 'One yes or no: James for core-repo features, the person who filed it for app features. Yes: the builder turns it on for everyone and closes it. No: dropped, and the builder removes its switch. It shows at the top for them: Your decisions.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
 };
@@ -784,14 +785,15 @@ function binsOf(v) {
     { key: 'relwait', word: 'Merged', groups: ['relwait'], info: 'relwait', tip: 'Merged, waiting for the next release' },
     { key: 'testers', word: 'For testers', groups: ['testers'], info: 'testers', tip: 'In the For testers release' },
     { key: 'done', word: 'For everyone', groups: ['done'], info: 'everyone', tip: 'In the release for everyone (Stable), or the app’s Store release' }];
-  return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ASK, ...tail, ...end];
+  return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ASK, ...tail,
+    { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];   // 0.44.0: app features have one too (the filer decides)
 }
 function sectionsOf(v) {
   if (v === 'bugs') return [['answer', 'Needs an answer'], ['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
   return [['test', 'Tested by the builder'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
-    .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
+    .filter(([g]) => v === 'core' || g !== 'james' && (v !== 'bugs' || g !== 'show'));
 }
 function strip(d, bins, groups) {
   const only = stage[d.view], out = [];
@@ -1561,7 +1563,7 @@ function whereLine(i) {
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
   // 0.43.0: tested by the builder's tester before merge; nobody has to check it
-  if (g === 'test') return [i.category === 'core' ? 'Tested by the builder · next: James’s show-and-tell' : 'Tested by the builder · it closes by itself', ''];
+  if (g === 'test') return [i.kind !== 'feature' && i.category !== 'app' && i.category !== 'core' || i.kind === 'bug' ? 'Tested by the builder · it closes by itself' : i.category === 'core' ? 'Tested by the builder · next: James’s show-and-tell' : 'Tested by the builder · next: show-and-tell for the person who filed it', ''];
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Older hand-back · the builder moves it on', ''];
   if (g === 'answer' && i.answered) return ['Answered · back to the builder within 10 minutes', ''];   // 0.42.0
@@ -1839,8 +1841,13 @@ function actionArea(i, inDetail) {
     const no = smallBtn('Decline', b => noteAsk(row, 'Why not? (optional)', 'Decline', note => james(i, 'decline', note, b)));
     row.append(yes, no); return row;
   }
-  if (g === 'show') {   // 0.38.3 (Miguel, 18 Nov): anyone on the team may press 'James approved' for him at the show-and-tell
-    if (!i.can_james) { row.append(greyBtn('James approved', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
+  if (g === 'show') {   // 0.44.0: the decider says Yes / No here too (same as Your decisions); 0.38.3: anyone may press 'James approved' on a core one
+    if (i.can_decide) {
+      const yes = smallBtn('Yes', () => decideNow(i, 'yes', '')); yes.classList.add('bd-mini-go');
+      const no = smallBtn('No', b => noteAsk(row, 'Why not? (optional)', 'No, drop it', note => decideNow(i, 'no', note)));
+      row.append(yes, no); return row;
+    }
+    if (!i.can_james) return null;
     if (i.switch) { const grp = make('div', 'bd-trygrp'); grp.append(trySwitch(i)); row.append(grp); }
     const yes = smallBtn('James approved', b => askPop(b, 'James approved it at the show-and-tell? The switch goes away (on for everyone) and it ships.', 'James approved', () => showOk(i, b)));
     yes.classList.add('bd-mini-go');
@@ -3498,7 +3505,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.43.2';
+const PAGE_VERSION = '0.44.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3581,7 +3588,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.43.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.44.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3607,14 +3614,109 @@ async function openLinked() {
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { loadDecisions(); load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
-el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
+el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); loadDecisions(true); } };
+
+// ---------- 0.44.0 (Miguel, 21 Nov 2026) Your decisions: the show-and-tell queue is the first thing each person sees ----------
+// Every feature (core and app) ends at one show-and-tell. The signed-in person's own queue (they are its decider: James
+// for core repos, the person who filed it for apps) sits on top as simple cards: title, a two-line pitch, Before/After
+// screenshot links (links, not images: CSP), and two big buttons. Yes / No act at once (No asks for an optional
+// one-line reason first) with a few seconds to Undo; the card goes and the next one shows. Everything else stays below.
+const DECIDE_UNDO_MS = 5000;
+let decideQ = null;          // {count, items} from api/decisions
+let decidePending = null;    // {item, decision, note, timer}
+let decideAsk = null;        // item id whose No reason box is open
+let decideOpen = false;      // 'Show all' (more than the first card)
+async function loadDecisions(refresh) {
+  if (!me || !me.connected) return;
+  try { decideQ = await api('api/decisions' + (refresh ? '?refresh=1' : '')); } catch (_) { return; }
+  drawDecisions();
+}
+function decideShots(i) {
+  const s = make('div', 'bd-shots bd-dec-shots');
+  const add = (kind, urls) => urls.forEach((u, n) => { const a = link('bd-shot wz-button secondary', u); a.textContent = kind + (urls.length > 1 ? ' ' + (n + 1) : '') + ' ↗'; s.append(a); });
+  add('Before', i.before || []); add('After', i.after || []);
+  return s.childNodes.length ? s : null;
+}
+function decideCard(i) {
+  const c = make('article', 'bd-card bd-dec-card'); c.dataset.id = i.id;
+  const meta = make('p', 'bd-dec-meta', `${repoName(i.repo)} · #${i.number}` + (i.opener && i.category === 'app' ? ` · filed by ${i.opener}` : ''));
+  const t = make('a', 'bd-dec-title'); t.href = `#item/${i.repo}/${i.number}`; t.textContent = i.title;
+  c.append(meta, t, make('p', 'bd-dec-pitch', i.pitch || ''));
+  const shots = decideShots(i); if (shots) c.append(shots);
+  if (decideAsk === i.id) {
+    const f = make('form', 'bd-dec-why');
+    const inp = make('input', 'wz-input bd-dec-why-in'); inp.type = 'text'; inp.maxLength = 300; inp.placeholder = 'Why not? (optional)'; inp.setAttribute('aria-label', 'Why not (optional)');
+    const row = make('div', 'bd-dec-btns');
+    const back = make('button', 'wz-button secondary bd-dec-btn', 'Back'); back.type = 'button'; back.onclick = () => { decideAsk = null; drawDecisions(); };
+    const go = make('button', 'wz-button bd-dec-btn bd-dec-no', 'No, drop it'); go.type = 'submit';
+    row.append(back, go); f.append(inp, row);
+    f.onsubmit = e => { e.preventDefault(); decideAsk = null; decideNow(i, 'no', inp.value.trim()); };
+    c.append(f); setTimeout(() => inp.focus(), 0);
+  } else {
+    const row = make('div', 'bd-dec-btns');
+    const no = make('button', 'wz-button secondary bd-dec-btn bd-dec-no', 'No'); no.type = 'button';
+    no.onclick = () => { decideAsk = i.id; drawDecisions(); };
+    const yes = make('button', 'wz-button bd-dec-btn bd-dec-yes', 'Yes'); yes.type = 'button';
+    yes.onclick = () => decideNow(i, 'yes', '');
+    row.append(no, yes); c.append(row);
+  }
+  return c;
+}
+function drawDecisions() {
+  const box = el('decide'); if (!box) return;
+  const items = ((decideQ && decideQ.items) || []).filter(i => !(decidePending && decidePending.item.id === i.id));
+  box.hidden = !items.length && !decidePending;
+  if (box.hidden) { box.replaceChildren(); return; }
+  const h = make('h2', 'bd-sec-h bd-dec-h', 'Your decisions ');
+  h.append(make('span', 'bd-dec-n', items.length ? `${items.length} to decide` : 'All decided'));
+  const out = [h];
+  if (decidePending) {
+    const u = make('div', 'bd-dec-undo'); u.setAttribute('role', 'status');
+    u.append(make('span', '', (decidePending.decision === 'yes' ? 'Yes: ' : 'No: ') + decidePending.item.title));
+    const b = make('button', 'wz-button secondary bd-dec-undo-b', 'Undo'); b.type = 'button'; b.onclick = decideUndo;
+    u.append(b); out.push(u);
+  }
+  const shown = decideOpen ? items : items.slice(0, 1);
+  for (const i of shown) out.push(decideCard(i));
+  if (items.length > 1) {
+    const more = make('button', 'bd-mini bd-dec-more', decideOpen ? 'Show one at a time' : `Show all ${items.length}`); more.type = 'button';
+    more.onclick = () => { decideOpen = !decideOpen; drawDecisions(); };
+    out.push(more);
+  }
+  box.replaceChildren(...out);
+}
+function decideNow(i, decision, note) {
+  if (decidePending) decideSend();   // a second tap sends the first one now
+  decidePending = { item: i, decision, note, timer: setTimeout(decideSend, DECIDE_UNDO_MS) };
+  drawDecisions();
+}
+function decideUndo() {
+  if (!decidePending) return;
+  clearTimeout(decidePending.timer); decidePending = null; drawDecisions();
+}
+async function decideSend() {
+  const p = decidePending; if (!p) return;
+  clearTimeout(p.timer); decidePending = null;
+  if (decideQ) { decideQ.items = decideQ.items.filter(x => x.id !== p.item.id); decideQ.count = decideQ.items.length; }
+  drawDecisions();
+  try {
+    const r = await api('api/decide', { repo: p.item.repo, number: p.item.number, decision: p.decision, note: p.note || undefined });
+    toast(p.decision === 'yes' ? 'Yes: the builder turns it on for everyone.' : 'No: dropped. The builder removes its switch.');
+    if (r && r.saved) setTimeout(() => load(view, true), 1500);
+  } catch (err) {
+    if (decideQ && err.status !== 409) { decideQ.items.unshift(p.item); decideQ.count = decideQ.items.length; }
+    drawDecisions(); say(`Couldn’t save that: ${err.message}`, 'error');
+  }
+}
+window.addEventListener('pagehide', () => { if (decidePending) { const p = decidePending; decidePending = null; fetch('api/decide', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: p.item.repo, number: p.item.number, decision: p.decision, note: p.note || undefined }) }).catch(() => {}); } });
+setInterval(() => { if (quiet() && !decidePending && !decideAsk) loadDecisions(); }, 60000);
 
 // ---------- 0.34.0 Needs you badge (switch needs-you-badge, humanitylabs-org/wizardos-tracker#87) ----------
 // The Wizard app badge shows how many items actually wait on the signed-in person (GET api/needs-you: the server's

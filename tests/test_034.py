@@ -115,7 +115,7 @@ class CountingRule(Fixture):
         cards = {'james': [{'id': 'a#1', 'turn': True, 'mine': False}, {'id': 'a#2', 'turn': True, 'mine': True}],
                  'test': [{'id': 'a#3', 'turn': True, 'shipped': True}, {'id': 'a#4', 'turn': True}],
                  'show': [{'id': 'a#5', 'turn': True}], 'answer': [{'id': 'a#6', 'turn': False}]}
-        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#2'])   # 0.43.0
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#2', 'a#5'])   # 0.44.0: show is its decider's turn
         self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#1', 'a#2', 'a#5'])
 
 

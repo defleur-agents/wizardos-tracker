@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.43.2
+version: 0.44.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.44.0** (Oscar for Miguel, 21 Nov) **Your decisions first, and every feature gets one show-and-tell.** The Tracker opens on **Your decisions**: the show-and-tell features you decide, one simple card at a time (title, a two-line pitch from the builder's Show-and-tell, Before / After screenshot links) with two big buttons, **Yes** and **No** (No asks for an optional one-line reason), 'N to decide', and a few seconds to Undo. Everything else stays below as it was. The rule (Miguel, 21 Nov): every feature, core or app, is built behind an off switch, tested by the builder's tester, merged switched off and labelled `show-and-tell`; exactly one person says yes or no. Core repos: James (also for his own). App repos: the person who filed it (an agent's filing belongs to its person; the builder bot's: whoever filed the item it links, else Miguel). Yes adds `switch-default` (the builder turns it on for everyone and closes it) and removes `show-and-tell`; No closes it as not planned with `dropped` (+ `switch-cleanup` when merged behind a switch). `GET /api/decisions`, `POST /api/decide`, MCP `decisions_list` / `board_decide` (the decider or their agent only). `/api/policy` step texts, `feature_flow`, `human_steps` and `lines` say the same.
 
 **0.43.2** (Oscar, 21 Nov) **No 'X checks this one'.** A tested item someone else filed said 'James checks this one (he filed it)' under its greyed Works / Needs changes, which read as a to-do. It now says 'Optional: James may send it back (he filed it)'.
 

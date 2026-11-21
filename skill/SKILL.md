@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.43.2
+version: 0.44.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -44,6 +44,7 @@ Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`)
 
 Labels: `building`, `ai-review`, `ready-to-test` (Human review), `show-and-tell`, `james-approved`, `approved`, `switch-default`, `dropped`, `wontfix`, `switch-cleanup`, `switch-remove`, `possible-duplicate`.
 
+- **Show-and-tell decisions** (0.44.0, Miguel 21 Nov): every feature (core and app) ends at ONE show-and-tell yes or no. Decider: core repos -> James (also his own); app repos -> the person who filed it (your filing is your person's); filed by the builder bot -> whoever filed the item it links, else Miguel. `decisions_list {for?}` shows your person's queue (pitch, before/after links); `board_decide {issue, decision: yes|no, note?, owner_request}` only when your person told you and is the decider. Yes = `switch-default` (the builder turns it on for everyone and closes it); No = closed not planned, `dropped`.
 - **Drop / Not a bug** (0.27): when someone on the team says a feature isn't needed (or a bug is not a bug / won't fix), `board_drop {issue, reason, owner_request}` with their short reason; it closes as not planned with `dropped` (or `wontfix`) and a comment naming who and why. A feature already merged behind its switch gets `switch-cleanup`; the builder files a `switch-remove` cleanup that removes the switch and its code. Turn its Try it switch off first. In the app this is the card's ⋯ menu.
 - **Report something else while testing** (0.27): `report_or_request` with the owner's words; it is always its own bug or feature, never a comment on the item under test.
 
