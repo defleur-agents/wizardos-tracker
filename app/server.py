@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.43.1'
+VERSION = '0.43.2'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3950,8 +3950,9 @@ def human_rule(kind, opener, assignees, me, base=None):
     # 0.20: plain words. 'James checks this one (he filed it)'; an agent's item names its person ('his agent filed it').
     he = pronoun_of(who, base)
     if filed_by_agent(opener, base):   # 0.19 (wizardos-tracker#31): an agent's items go to its person
-        return False, f'{who} checks this one ({PRONOUN_POSS.get(he, "their")} agent filed it)'
-    return False, f'{who} checks this one ({he} filed it)'
+        # 0.43.2: nobody has to test it (the builder's tester did); Works / Doesn't work is only an optional send-back
+        return False, f'Optional: {who} may send it back ({PRONOUN_POSS.get(he, "their")} agent filed it)'
+    return False, f'Optional: {who} may send it back ({he} filed it)'
 
 
 PRONOUN_POSS = {'he': 'his', 'she': 'her', 'they': 'their'}

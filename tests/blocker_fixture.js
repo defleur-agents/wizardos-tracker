@@ -15,7 +15,7 @@
   const cases = {
     onbox_no: item('movies', 15, place('movies', 'Settings › Poster wall')),
     app_newer: item('wizard-notes', 19, { switch_how: 'wizard-notes:friendly-phone', switch_place: { kind: 'other', text: 'x' } }),
-    other_reviewer: item('movies', 16, Object.assign(place('movies', 'Settings › Poster wall'), { can_review: false, review_rule: 'James checks this one (he filed it)' })),
+    other_reviewer: item('movies', 16, Object.assign(place('movies', 'Settings › Poster wall'), { can_review: false, review_rule: 'Optional: James may send it back (he filed it)' })),
     not_blocked: item('wizard-calendar', 20, place('wizard-calendar', 'Settings › Compact')),
   };
   const yes = { state: 'yes', text: 'On your Wizard ✓', fix: null, apps: [] }, no = { state: 'no', text: 'Not on your Wizard yet', fix: 'Update Movies', apps: ['movies'] };

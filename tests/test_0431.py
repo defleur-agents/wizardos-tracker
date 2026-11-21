@@ -31,3 +31,17 @@ class Typing(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NoCheckToDo(unittest.TestCase):
+    def test_rule_text_is_optional(self):
+        import os
+        import sys
+        import tempfile
+        os.environ.setdefault('DATA_DIR', tempfile.mkdtemp(prefix='tracker-0432-'))
+        sys.path.insert(0, str(ROOT / 'app'))
+        import server as S
+        ok, rule = S.human_rule('bug', 'jdefleur', [], 'mistermizel')
+        self.assertFalse(ok)
+        self.assertEqual(rule, 'Optional: James may send it back (he filed it)')
+        self.assertNotIn('checks this one', (ROOT / 'app' / 'server.py').read_text().split('def human_rule', 1)[1].split('PRONOUN_POSS =', 1)[0].replace("# 0.20: plain words. 'James checks this one", ''))
