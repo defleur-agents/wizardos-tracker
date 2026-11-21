@@ -154,13 +154,14 @@ class Bundle(unittest.TestCase):
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.43.0')
-        self.assertIn("const PAGE_VERSION = '0.43.0'", JS)
-        self.assertIn("version: '0.43.0' })", JS)
-        self.assertEqual(json.loads((ROOT / 'runtipi' / 'config.json').read_text())['version'], '0.43.0')
-        self.assertEqual(json.loads((ROOT / 'openapi.json').read_text())['info']['version'], '0.43.0')
+        v = S.VERSION
+        self.assertGreaterEqual(tuple(map(int, v.split('.'))), (0, 43, 0))
+        self.assertIn(f"const PAGE_VERSION = '{v}'", JS)
+        self.assertIn(f"version: '{v}' }})", JS)
+        self.assertEqual(json.loads((ROOT / 'runtipi' / 'config.json').read_text())['version'], v)
+        self.assertEqual(json.loads((ROOT / 'openapi.json').read_text())['info']['version'], v)
         self.assertIn('**0.43.0**', (ROOT / 'wizard.md').read_text())
-        self.assertIn('version: 0.43.0', (ROOT / 'skill' / 'SKILL.md').read_text())
+        self.assertIn(f'version: {v}', (ROOT / 'skill' / 'SKILL.md').read_text())
 
 
 if __name__ == '__main__':
