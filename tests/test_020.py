@@ -106,10 +106,10 @@ class Server(unittest.TestCase):
 class Wording(unittest.TestCase):
     def test_checks_this_one(self):
         reset()
-        self.assertEqual(S.human_rule('bug', 'jdefleur', [], 'mistermizel'), (False, 'James checks this one (he filed it)'))
-        self.assertEqual(S.human_rule('bug', 'defleur-agents', [], 'mistermizel'), (False, 'James checks this one (his agent filed it)'))
+        self.assertEqual(S.human_rule('bug', 'jdefleur', [], 'mistermizel'), (False, 'Optional: James may send it back (he filed it)'))
+        self.assertEqual(S.human_rule('bug', 'defleur-agents', [], 'mistermizel'), (False, 'Optional: James may send it back (his agent filed it)'))
         reset({'team': [{'name': 'Ana', 'logins': ['ana'], 'pronoun': 'she', 'agents': []}, {'name': 'Miguel', 'logins': ['mistermizel'], 'agents': []}]})
-        self.assertEqual(S.human_rule('bug', 'ana', [], 'mistermizel')[1], 'Ana checks this one (she filed it)')
+        self.assertEqual(S.human_rule('bug', 'ana', [], 'mistermizel')[1], 'Optional: Ana may send it back (she filed it)')
         reset()
         self.assertNotIn('tests this:', (ROOT / 'app/server.py').read_text())
 
@@ -120,12 +120,12 @@ const ob = { 'o/r#1': { release: { text: 'In For testers 0.3.150' } } };
 const onboxOf = i => ob[i.id] || null;
 console.log(JSON.stringify([
   whereLine({id: 'o/r#1', kind: 'bug', group: 'test', shipped: true, can_review: true})[0],
-  whereLine({id: 'o/r#1', kind: 'bug', group: 'test', shipped: true, can_review: false, review_rule: 'James checks this one (he filed it)'})[0],
+  whereLine({id: 'o/r#1', kind: 'bug', group: 'test', shipped: true, can_review: false, review_rule: 'Optional: James may send it back (he filed it)'})[0],
   whereLine({id: 'o/r#1', kind: 'bug', group: 'airev', shipped: true})[0],
   whereLine({kind: 'bug', group: 'done', state_reason: 'completed', ship: {text: 'In For everyone 0.3.152'}, checked: {text: 'Checked by Miguel'}})[0],
   whereLine({kind: 'bug', group: 'shipping', state_reason: 'completed', ship: {text: 'In For testers 0.3.150'}, checked: {text: 'Checked (no problems in 7 days)'}})[0],
   whereLine({kind: 'bug', group: 'done', state_reason: 'completed', ship: {text: 'Shipped in Messenger 0.2.1'}, checked: {text: 'Checked by Jan'}})[0],
-  whereLine({group: 'test', can_review: false, review_rule: 'Jan checks this one (he filed it)'})[0],
+  whereLine({group: 'test', can_review: false, review_rule: 'Optional: Jan may send it back (he filed it)'})[0],
   whereLine({group: 'test', can_review: true})[0]]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
         self.assertEqual(got, ['Shipped in For testers 0.3.150', 'Shipped in For testers 0.3.150',
