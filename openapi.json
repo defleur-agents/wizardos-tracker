@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.43.2",
+    "version": "0.44.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1822,6 +1822,87 @@
           },
           "409": {
             "description": "Not waiting on an answer, or the PR is not an open linked PR"
+          }
+        }
+      }
+    },
+    "/api/decisions": {
+      "get": {
+        "summary": "0.44.0 Your decisions: open show-and-tell features whose decider is the signed-in person (James for core repos, the filer for app repos; an agent's filing -> its person; the builder bot's -> the linked item's filer, else Miguel). ?for=<name>|all, ?refresh=1. Returns {me, for, count, items: [{id, repo, number, title, url, category, decider, opener, pitch, before, after, switch, can_decide}], counts: {person: n}, total}.",
+        "parameters": [
+          {
+            "name": "for",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the queue"
+          }
+        }
+      }
+    },
+    "/api/decide": {
+      "post": {
+        "summary": "0.44.0 Show-and-tell yes or no. Body {repo, number, decision: yes|no, note?}. Only the item's decider (or their agent via MCP board_decide). Yes: comment, labels approved + switch-default, show-and-tell removed (the builder turns it on for everyone and closes it). No: comment with the reason, label dropped (+ switch-cleanup when merged behind a switch), stage labels removed, closed as not planned.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "number",
+                  "decision"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "yes",
+                      "no"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "decided"
+          },
+          "400": {
+            "description": "decision must be yes or no"
+          },
+          "403": {
+            "description": "not the decider"
+          },
+          "409": {
+            "description": "not waiting for show-and-tell"
           }
         }
       }

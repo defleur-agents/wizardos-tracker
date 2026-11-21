@@ -44,10 +44,10 @@ class Steps(unittest.TestCase):
         st = S.steps_for('features')
         self.assertEqual([s['key'] for s in st], ['open', 'build', 'tester', 'show'])
         show = st[3]
-        self.assertEqual((show['name'], show['role'], show['person'], show['only']), ('Show-and-tell', 'James', True, 'core_repos'))
+        # 0.44.0: every feature, core and app (James for core repos, the filer for apps)
+        self.assertEqual((show['name'], show['role'], show['person'], show['only']), ('Show-and-tell', 'James (core repos) · the filer (apps)', True, None))
         self.assertEqual(show['label'], 'show-and-tell')
         self.assertIn('the one human step', show['about'])
-        self.assertIn('switched on', st[1]['about'])
         self.assertIn('off switch', st[1]['about'])
         self.assertEqual([s for s in st if s.get('person')], [show])   # the only step a person does
         for s in st:
@@ -69,7 +69,8 @@ class Policy(unittest.TestCase):
         self.assertIn("the builder's own tester, before merge", text)
         self.assertIn('no person tests anything', text)
         self.assertIn('Show-and-tell is the only human step', text)
-        self.assertIn('App features (repos outside core_repos)', text)
+        self.assertIn('Features (every repo): built behind an off switch', text)   # 0.44.0
+        self.assertIn('app repos -> the person who filed it', text)
         self.assertTrue(any(l.startswith('Bugs (Miguel, 21 Nov)') and 'closed automatically by the builder' in l for l in self.p['lines']))
         self.assertTrue(any('builder:blocked' in l and '10 minutes' in l for l in self.p['lines']))
 
@@ -85,10 +86,10 @@ class Policy(unittest.TestCase):
     def test_feature_flow_and_human_steps(self):
         r = self.p['builder_rules']
         self.assertEqual(r['feature_flow']['app']['closed_by'], 'builder')
-        self.assertIsNone(r['feature_flow']['app']['person'])
+        self.assertEqual(r['feature_flow']['app']['person'], 'filer')   # 0.44.0
         self.assertEqual(r['feature_flow']['core']['person'], 'James')
         self.assertEqual(r['feature_flow']['core']['then'], 'show-and-tell')
-        self.assertEqual(r['human_steps'], ['show-and-tell (core-repo features, James)'])
+        self.assertEqual(r['human_steps'], ['show-and-tell (every feature: James for core repos, the filer for app repos)'])
         self.assertEqual(r['blocked'], {'label': 'builder:blocked', 'only_for': 'real decisions', 'recheck_seconds': 600})
         self.assertEqual(r['core_repos'], ['wizard-os', 'wizard-ux', 'wizard-app-manager', 'wizard-agent-service', 'try-wizard'])
 
@@ -116,16 +117,16 @@ class NobodysTurn(unittest.TestCase):
         cards = {'test': [{'id': 'a#1', 'turn': True}, {'id': 'a#2', 'turn': True, 'shipped': True}],
                  'show': [{'id': 'a#3', 'turn': True}]}
         self.assertEqual([i['id'] for i in S.needs_you_items([{'james': True, 'groups': cards}])], ['a#3'])
-        self.assertEqual(S.needs_you_items([{'james': False, 'groups': cards}]), [])
+        self.assertEqual([i['id'] for i in S.needs_you_items([{'james': False, 'groups': cards}])], ['a#3'])   # 0.44.0: the decider's
 
     @unittest.skipUnless(shutil.which('node'), 'node missing')
     def test_my_turn_and_card_words(self):
         src = fn('myTurn') + '\n' + fn('whereLine') + """
 const onboxOf = () => null, bugLine = () => ['x', ''], nextLine = () => '';
-console.log(JSON.stringify([myTurn({group: 'test', can_review: true}), myTurn({group: 'show', can_james: true}),
+console.log(JSON.stringify([myTurn({group: 'test', can_review: true}), myTurn({group: 'show', turn: true}),
   whereLine({group: 'test', category: 'app'})[0], whereLine({group: 'test', category: 'core'})[0], whereLine({group: 'airev'})[0]]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(got, [False, True, 'Tested by the builder · it closes by itself',
+        self.assertEqual(got, [False, True, 'Tested by the builder · next: show-and-tell for the person who filed it',
                                'Tested by the builder · next: James’s show-and-tell', 'Older hand-back · the builder moves it on'])
 
     def test_no_check_it_todo_for_bugs(self):
