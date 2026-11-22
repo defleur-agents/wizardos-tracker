@@ -1961,12 +1961,14 @@ function actionArea(i, inDetail) {
       if (!t0.run) row.append(...blockerBits(i, t0, t0.why));
     }
     // 0.49.0: the card's first line already says who it waits on; 'X decides' only when that line is missing
-    if (!i.can_decide) { const said = !!waitHead(i); if (!said) row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); return said && !tg0 && !t0.run ? null : row; }
+    // 0.51.0 (Miguel, 22 Nov): an idea filed by the person who approves it is approved by itself after 7 quiet days; the card says when
+    const auto = i.auto_at && !isNaN(new Date(i.auto_at)) ? make('span', 'bd-why-s bd-auto', `Turns on for everyone by itself on ${new Date(i.auto_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} unless declined`) : null;
+    if (!i.can_decide) { const said = !!waitHead(i); if (!said) row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); if (auto) row.append(auto); return said && !tg0 && !t0.run && !auto ? null : row; }
     const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
     const yes = smallBtn('Approve', b => askPop(b, (n > 1 ? `Approve all ${n} parts?` : 'Approve?') + ' The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
     yes.classList.add('bd-mini-go');
     const no = smallBtn('Decline', () => noteAsk(row, 'Why not? (optional)', n > 1 ? `Decline all ${n} parts` : 'Decline', note => decideAct(i, 'no', note)));
-    row.append(yes, no); return row;
+    row.append(yes, no); if (auto) row.append(auto); return row;
   }
   return null;
 }
@@ -2686,7 +2688,7 @@ async function approvePr(i, d, p, row, b, say_) {
   }
   done();
 }
-el('detail').addEventListener('close', () => { openId = null; openItem = null; unpop(); hold(false); });
+el('detail').addEventListener('close', () => { openId = null; openItem = null; unpop(); hold(false); linkDone(); });   // 0.51.0: the same link tapped again opens it again
 
 // 0.17: the switch in the detail: a real toggle with its name and state, or the exact place to flip it.
 function detailSwitch(i) {
@@ -3599,7 +3601,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.50.1';
+const PAGE_VERSION = '0.51.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3724,7 +3726,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.50.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.51.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3732,8 +3734,26 @@ loadCatalog().catch(() => {});
 // 0.33.8: item links (Miguel, 14 Nov). #item/<owner>/<repo>/<number> opens that card's detail in its own tab, so an
 // agent can send a link to the exact item instead of "find it in the Tracker".
 const ITEM_RE = /^#item\/([\w.-]+)\/([\w.-]+)\/(\d+)$/;
-async function openLinked() {
+// 0.51.0 (Miguel, 22 Nov: "when I refresh, this one item always seems open"). The shell keeps the last link it opened in
+// this window (hash and all) and loads it again on every refresh, so a card opened from a chat link came back for
+// good. A link opens its item once: the page remembers the link it has shown, and a fresh load with that same link
+// inside the shell opens the list instead, unless something in the shell was tapped a moment before (the same link
+// tapped again while the app was closed). A browser that has shown no link since this release treats the one it loads
+// with the same way: it is the old one that stuck. A link tapped while the page is open arrives as a hash change and
+// always opens; outside the shell (the page in its own tab) a link always opens.
+const LINK_KEY = 'board.link.shown';
+const tappedIn = (() => { try { const ua = window.parent.navigator.userActivation; return ua ? !!ua.isActive : null; } catch (_) { return null; } })();
+function linkShown(set) { try { if (set === undefined) return localStorage.getItem(LINK_KEY); localStorage.setItem(LINK_KEY, set); } catch (_) {} return ''; }
+function linkRestored() {
+  if (window.parent === window || tappedIn === true) return false;
+  const shown = linkShown();
+  return shown === location.hash || (shown === null && tappedIn === false);
+}
+function linkDone() { if (ITEM_RE.test(location.hash)) { try { history.replaceState(null, '', '#' + view); } catch (_) {} } }
+async function openLinked(fresh) {
   const m = ITEM_RE.exec(location.hash); if (!m) return;
+  if (fresh && linkRestored()) return linkDone();
+  linkShown(location.hash);
   const repo = m[1] + '/' + m[2], number = Number(m[3]), id = `${repo}#${number}`;
   const find = w => { const d = cache[w]; return d && Object.values(d.groups || {}).flat().find(i => i.id === id); };
   try {
@@ -3750,7 +3770,7 @@ async function openLinked() {
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); waitBadges(); goMine(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(true); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); waitBadges(); goMine(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
