@@ -28,7 +28,7 @@ if '__file__' in globals():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import report as reporter  # noqa: E402  0.20: the 'Report or request' form (its own module, a future standalone app)
 import dupes  # noqa: E402  0.41.0: the duplicate check at filing
-import watches  # noqa: E402  0.55.0: agent watches (switch agent-watches, #146)
+import watches  # noqa: E402  0.55.0: agent watches (switch agent-watches, issue 146)
 import feedback_inbox  # noqa: E402  0.26.5: the Feedback app's inbox (Pending approval), through the Feedback relay
 
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
@@ -6322,7 +6322,7 @@ TOOLS = [
     {'name': 'watch_list', 'description': "0.55.0 (switch agent-watches): the items this Wizard's Tracker watches for agent threads: id, thread, note, last_wake, wakes, pending (moved, waiting for the 10-minute gap), held (wakes kept because this Wizard can't wake a thread from an app yet: wake_route missing), ended {why installed|not_planned|closed|expired|stopped}. thread: only that thread's.", 'inputSchema': {'type': 'object', 'properties': {'thread': {'type': 'string', 'description': 'A Wizard thread id.'}}}},
     {'name': 'watch_stop', 'description': '0.55.0 (switch agent-watches): stop watching one item (no last wake). A watch also ends by itself once the fix is installed on this Wizard, or the item is closed as not planned.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
 ]
-# 0.55.0 (#146): the three filing tools take an optional watch for the filing agent's own thread
+# 0.55.0 (issue 146): the three filing tools take an optional watch for the filing agent's own thread
 WATCH_FILE_ARGS = {
     'watch_thread': {'type': 'string', 'maxLength': 160, 'description': "Optional (switch agent-watches): your own Wizard thread id. The Tracker then watches the filed item for free (no model turns) and wakes that thread with one run only when it moves (a comment by someone else, labels, state, a linked PR's commits, merge state or merge), at most once every 10 minutes, plus a daily check-in, until the fix is installed on this Wizard (one last wake: go check it) or it is closed as not planned. It never messages your person. Answer: watch {saved, wakes sent|held, why}."},
     'watch_note': {'type': 'string', 'maxLength': watches.NOTE_MAX, 'description': 'Optional, with watch_thread: one line each wake repeats back to you (what to check).'},
