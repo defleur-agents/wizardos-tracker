@@ -5,7 +5,7 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   // the box answers only for the WizardOS state; everything else never answers, so the fixture's own data stays put
   window.fetch = u => String(u).includes('store-install/_updates') ? Promise.resolve(new Response(JSON.stringify(updates), { status: 200, headers: { 'Content-Type': 'application/json' } })) : new Promise(() => {});
-  localStorage.clear(); wizFail = {};
+  localStorage.clear(); localStorage.setItem('board.updopen', 'true'); wizFail = {};
   const app = (id, name, version, latest) => ({ id, name, version, latest, update: true, status: 'running', release: { version: latest } });
   const OS_BAD = { channel: 'latest', installed: null, latest: '0.3.362', update_available: true, installing: false, failed: true, retry_target: '0.3.358',
     failure_reason: 'wizard-agent-service: update to release source failed' };
@@ -24,7 +24,7 @@
     else { a.update = false; a.version = a.latest; delete wizFail[id]; runEnd(r, true); }
   };
   updateWizardOS = async btn => { calls.push('os' + (btn ? ':tap' : '')); const r = newRun('os', 'WizardOS', updates.latest); await sleep(150); updates = { ...updates, installed: updates.latest, update_available: false }; runEnd(r, true); };
-  const reset = (apps, os) => { runs.clear(); wizBusy.clear(); wizFail = {}; localStorage.clear(); queue = null; calls.length = 0; peak.n = 0; appFails = {}; catalog = { apps }; updates = os; selfUpdate(); };
+  const reset = (apps, os) => { runs.clear(); wizBusy.clear(); wizFail = {}; localStorage.clear(); localStorage.setItem('board.updopen', 'true'); queue = null; calls.length = 0; peak.n = 0; appFails = {}; catalog = { apps }; updates = os; selfUpdate(); };
   const tx = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
   const read = () => { const b = el('selfupd'); return { hidden: b.hidden, title: tx(b.querySelector('span.bd-selfupd-t')), all: tx(el('selfupd-go')),
     rows: [...b.querySelectorAll('.bd-selfupd-row')].map(r => [r.dataset.updRow, tx(r.querySelector('.bd-selfupd-n')), tx(r.querySelector('button'))]),
