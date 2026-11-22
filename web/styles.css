@@ -901,6 +901,13 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-selfupd-t { font-weight: 650; }
 .bd-selfupd-go { min-height: 44px; font-weight: 700; }
 .bd-selfupd .bd-upd { flex: 1 1 100%; margin: 0; }
+/* 0.50.1: each thing with an update on its own line with its own Update; how far Update all is */
+.bd-selfupd-row { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; border-top: 1px solid var(--line); }
+.bd-selfupd-n { min-width: 0; overflow-wrap: anywhere; font-size: .9rem; color: var(--ink-2); }
+.bd-selfupd-n b { color: var(--ink); font-weight: 650; }
+.bd-selfupd-row .bd-mini { flex: none; min-height: 36px; padding: 0 14px; }
+.bd-selfupd-q { flex: 1 1 100%; margin: 0; }
+.bd-selfupd > .bd-upd-why { flex: 1 1 100%; }
 /* 0.24.2: why a greyed Try it cannot be flipped right now, next to it in the pop-up bar */
 .bd-appmodal-try .bd-try-why { margin: 0; max-width: 14rem; white-space: normal; line-height: 1.2; }
 

@@ -123,10 +123,10 @@ class OneTapUpdate(unittest.TestCase):
         self.assertIn('runningSelf(a)', f)
         self.assertIn("'Update all'", f)
         # 0.38.2: the banner hands the list to the kept queue (tests/test_0382.py), which runs apps, WizardOS, the Tracker
-        self.assertIn("queueStart(pendingUpdates())", f)
+        self.assertIn("queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed())))", f)   # 0.50.1: never a WizardOS update that failed last time
         self.assertIn("x.key === 'os' ? updateWizardOS(null, null) : updateApp(x.key)", JS)
         self.assertNotIn('askPop', f)   # one tap
-        self.assertIn('updPanel(running[1], null)', f)
+        self.assertIn('for (const r of running) out.push(updPanel(r, null));', f)   # 0.50.1: every running update, not the first
         self.assertIn("STORE_INSTALL + encodeURIComponent(a.id)", fn('attemptUpdate'))   # 0.36.0
 
     def test_checked_at_open_and_periodically(self):

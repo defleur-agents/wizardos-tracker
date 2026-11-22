@@ -3277,7 +3277,17 @@ function queueSettle(key) {
 }
 const queueRunning = key => { const r = runs.get(key); return !!r && r.state === 'running'; };
 async function queueWait(key) { while (queueRunning(key)) await sleep(1500); }
+// 0.50.1: an app update never starts while the WizardOS update is installing. On 21 Nov Music was updated 9 seconds
+// after a WizardOS update began and failed ('network … not found'): that install recreates the apps' networks.
+const osBusy = () => queueRunning('os') || !!(updates && updates.installing);
+async function osIdle() {
+  for (let n = 0; n < 500 && osBusy(); n++) {
+    await sleep(3000);
+    if (!queueRunning('os')) { try { updates = await getJSON(UPDATES_API); } catch (_) {} }   // started elsewhere: ask the box
+  }
+}
 async function queueRun(x) {
+  if (x.key !== 'os' && osBusy()) { selfUpdate(); await osIdle(); }
   try { await (x.key === 'os' ? updateWizardOS(null, null) : updateApp(x.key)); } catch (_) {}
   await queueWait(x.key);   // an update that was already running (Settings, another tap) is followed to its end
 }
@@ -3312,7 +3322,7 @@ async function updateWizardOS_(btn, item) {
     const target = u && (u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable));
     if (!u || !u.update_available) return btn && pop(btn, '', `WizardOS ${u && u.installed ? u.installed : ''} is the latest on ${u && u.channel === 'latest' ? 'For testers' : 'Stable'}.`);
     if (runs.get('os') && runs.get('os').state === 'running') return;
-    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; setTimeout(() => updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }), 0); });
+    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS${u.installed ? ' ' + u.installed + ' →' : ' to'} ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; setTimeout(() => updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }), 0); });
     const r = newRun('os', 'WizardOS', target, item, b => updateWizardOS(b, item), u.quick);
     try {
       const a = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
@@ -3510,7 +3520,7 @@ function paintWizards() {
   if (u.update_available && !osRun && !u.installing) os.append(smallBtn('Update', b => updateWizardOS(b)));
   card.append(os);
   if (osRun) card.append(updPanel(osRun, null));
-  if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
+  if (u.failed || u.interrupted) card.append(make('p', 'bd-why', osFailText(u)));
   const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && selfVer() ? runningSelf(a) : a);
   const n = pendingUpdates().filter(x => x.key !== 'os').length;
   const bar = make('div', 'bd-wiz-bar');
@@ -3589,7 +3599,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.50.0';
+const PAGE_VERSION = '0.50.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3631,29 +3641,71 @@ function pendingUpdates() {
   if (self) list.push({ key: self.id, name: 'the Tracker' });
   return list;
 }
+// 0.50.1 (Miguel, 21-22 Nov: 'looks like it's doing one at a time', 'I should be able to update individually as well'):
+// the banner shows EVERY update that is running (it showed the first of up to three), how far Update all is, and each
+// thing with an update has its own Update button. A WizardOS update that failed last time on this Wizard says so with
+// the App Manager's reason and is left out of Update all (it takes minutes, restarts Wizard and fails the same way):
+// 'Try again' on its own line starts it deliberately.
+const osFailed = () => !!(updates && (updates.failed || updates.interrupted));
+const osFailText = u => `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`;
+function updateOne(key, btn) {
+  if (key !== 'os') return updateApp(key, btn);
+  if (!queueOpen()) return updateWizardOS(btn);
+  // app updates are under way: WizardOS goes after them (the queue's order), never on top of them
+  askPop(btn, 'Update WizardOS after the updates that are running? Wizard restarts for a moment.', 'Update', () => { queueStart([{ key: 'os', name: 'WizardOS' }]); });
+}
 function selfUpdate() {
   const box = el('selfupd'); if (!box) return;
-  const running = [...runs.entries()].find(([, r]) => r && r.state !== 'done' && r.state !== 'failed');
+  const running = [...runs.values()].filter(r => r && r.state !== 'done' && r.state !== 'failed');
+  const q = queueGet(), inq = new Set(q ? [...q.todo.map(x => x.key), ...Object.keys(q.doing)] : []);
+  const list = pendingUpdates().filter(x => !inq.has(x.key));
+  const bad = osFailed(), all = list.filter(x => !(x.key === 'os' && bad));
+  // a thing that is still listed says why it didn't update on its own line (below); the rest keep their line here
+  const told = x => list.some(y => y.key === x.key) && (x.key === 'os' ? bad : !!wizFail[x.key]);
   // 0.38.2: the apps of an Update all that didn't update, with why (also after the page was away or reloaded)
   const last = store.get(QUEUE_LAST), fails = [];
   if (last && last.failed && last.failed.length && !draining) {
-    for (const f of last.failed) fails.push(make('p', 'bd-upd-why', `${cap(f.name)} didn’t update: ${f.reason}`));
-    fails.push(smallBtn('OK', () => { store.set(QUEUE_LAST, null); selfUpdate(); }));
+    for (const f of last.failed) if (!told(f)) fails.push(make('p', 'bd-upd-why', `${cap(f.name)} didn’t update: ${f.reason}`));
+    if (fails.length) fails.push(smallBtn('OK', () => { store.set(QUEUE_LAST, null); selfUpdate(); }));
   }
-  if (running) { box.hidden = false; box.className = 'bd-selfupd'; box.replaceChildren(updPanel(running[1], null)); return; }
-  const list = pendingUpdates();
-  if (!list.length && !fails.length) { box.hidden = true; return box.replaceChildren(); }
+  const out = [];
+  if (q && (q.todo.length || Object.keys(q.doing).length)) {
+    const n = q.done.length + q.failed.length, total = n + q.todo.length + Object.keys(q.doing).length;
+    const held = Object.keys(q.doing).filter(k => !queueRunning(k) && k !== 'os' && osBusy()).map(k => q.doing[k].name);
+    const line = make('p', 'bd-selfupd-t bd-selfupd-q', `Updating ${total}: ${n - q.failed.length} done${q.failed.length ? `, ${q.failed.length} didn’t update` : ''}`);
+    line.id = 'selfupd-q';
+    if (q.todo.length) line.append(make('span', 'bd-meta', ` · next: ${q.todo.map(x => cap(x.name)).join(', ')}`));
+    if (total > 1) out.push(line);
+    if (held.length) out.push(make('p', 'bd-upd-note bd-selfupd-q', `${held.map(cap).join(', ')} wait${held.length === 1 ? 's' : ''} for the WizardOS update to finish.`));
+  }
+  for (const r of running) out.push(updPanel(r, null));
+  if (!out.length && !list.length && !fails.length) { box.hidden = true; return box.replaceChildren(); }
   box.className = 'bd-selfupd'; box.hidden = false;
-  if (!list.length) return box.replaceChildren(...fails);
+  if (!list.length) return box.replaceChildren(...out, ...fails);
   const names = list.map(x => x.name);
   const t = make('span', 'bd-selfupd-t', list.length === 1 ? `An update is ready: ${names[0]}.` : `${list.length} updates ready: ${names.join(', ')}.`);
-  const go = make('button', 'wz-button bd-selfupd-go', list.length === 1 ? 'Update' : 'Update all'); go.type = 'button'; go.id = 'selfupd-go';
-  go.disabled = !!draining;
-  go.onclick = () => {
-    if (draining) return; go.disabled = true;
-    queueStart(pendingUpdates()).finally(() => checkSelfUpdate(true));
-  };
-  box.replaceChildren(t, go, ...fails);
+  const head = [t];
+  if (all.length > 1 || (list.length === 1 && !bad && !out.length && !wizFail[list[0].key])) {
+    const go = make('button', 'wz-button bd-selfupd-go', list.length === 1 ? 'Update' : 'Update all'); go.type = 'button'; go.id = 'selfupd-go';
+    go.onclick = () => {   // while some are updating, the rest join the same queue
+      go.disabled = true;
+      queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed()))).finally(() => checkSelfUpdate(true));
+    };
+    head.push(go);
+  }
+  const rows = [];
+  if (list.length > 1 || bad || out.length || list.some(x => wizFail[x.key])) for (const x of list) {
+    const os = x.key === 'os', a = os ? null : fresh(x.key);
+    const row = make('div', 'bd-selfupd-row'); row.dataset.updRow = x.key;
+    const to = os ? (updates.latest_for_channel || (updates.channel === 'latest' ? updates.latest : updates.stable)) : a && a.latest;
+    const txt = make('span', 'bd-selfupd-n'); txt.append(make('b', '', cap(x.name)), document.createTextNode(to ? ` ${os ? (updates.installed ? updates.installed + ' → ' : '') : (a.id === 'wizardos-tracker' ? selfVer() || a.version || '?' : a.version || '?') + ' → '}${to}` : ''));
+    const f = os ? null : wizFail[x.key];
+    const one = smallBtn(os && bad ? 'Try again' : f ? 'Retry' : 'Update', b => { if (f) { delete wizFail[x.key]; store.set('board.wizfail', wizFail); } updateOne(x.key, b); }); one.dataset.updOne = x.key;
+    row.append(txt, one); rows.push(row);
+    if (f) { const why = make('p', 'bd-upd-why', `Didn’t update: ${f.reason || 'No reason given'}`); why.dataset.updWhy = x.key; rows.push(why); }
+    if (os && bad) { const why = make('p', 'bd-upd-why', osFailText(updates) + (all.length > 1 ? ' Update all leaves it out.' : '')); why.dataset.updWhy = 'os'; rows.push(why); }
+  }
+  box.replaceChildren(...out, ...head, ...rows, ...fails);
 }
 async function checkSelfUpdate(force) {
   try { await Promise.all([loadCatalog(force), checkVersion()]); await resumeRuns(); } catch (_) {}
@@ -3666,13 +3718,13 @@ setTimeout(() => checkSelfUpdate(false), 1500);
 setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 // 0.36.4: while it offers an update, check again every 2 minutes, so an update that happened elsewhere (Settings, the
 // nightly run, another device) clears the offer instead of leaving it up for half an hour.
-setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hidden && el('selfupd-go')) { catalog = null; checkSelfUpdate(false); } }, 120000);
+setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hidden && (el('selfupd-go') || b.querySelector('[data-upd-one]')) && !document.querySelector('.bd-askrow')) { catalog = null; checkSelfUpdate(false); } }, 120000);
 
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.50.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.50.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

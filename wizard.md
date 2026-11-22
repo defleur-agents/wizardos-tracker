@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.50.0
+version: 0.50.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.50.1** (Oscar for Miguel, asked 21-22 Nov) **Updates you can see, one at a time or all at once.** The banner at the top now shows every update that is running (it showed only the first of up to three, so Update all looked like one at a time) and how far Update all is ('Updating 5: 2 done · next: …'). Each thing with an update has its own line with its own **Update**, so you can update one app and leave the rest, WizardOS included; Update all is still the one tap for everything. An app that didn't update keeps its line with the reason and **Retry**. A WizardOS update that failed last time on this Wizard says so on the banner with the App Manager's reason, and Update all leaves it out (it used to start it again every time: minutes of restart that ended the same way); **Try again** on its line starts it when you choose. An app update no longer starts while WizardOS is installing (that broke an app update on 21 Nov): it waits and says so. The WizardOS confirm no longer reads 'null →' when the installed release is unknown.
 
 **0.50.0** (Oscar for Miguel, asked 21 Nov) **The pipeline first.** Core, Apps and Bugs open on the stage strip alone: tap a stage to see its cards, tap it again to put them away (the tools row shows with the cards). The Waiting on me screen is gone: what waits on you is an orange count on its tab and on its stage, and those cards lead the stage under 'Waiting on you'; an old #me link opens that tab and stage. Goals reads '8 goals' (a plain count, never a badge). The show-and-tell stage is called **Final approval** on the page, and a card says who approves ('Waiting on James for final approval'). Only the page's words changed: the `show-and-tell` label, the API keys (`show`) and the `Show-and-tell:` comment lines the builder reads are the same.
 
