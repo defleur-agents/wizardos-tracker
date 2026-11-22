@@ -507,7 +507,7 @@ console.log(JSON.stringify([out.map(i => i.id), l.map(i => { const x = ideaOf(i)
     def test_lists_and_counts_use_ideas(self):
         self.assertIn('groups.show = onePerIdea(groups.show);', fn('render'))
         self.assertLess(fn('render').index('onePerIdea(groups.show)'), fn('render').index('strip(d, bins, groups)'))   # the strip counts ideas
-        self.assertIn('return onePerIdea(out);', fn('meItems'))          # Waiting on me and its badge
+        self.assertIn('return onePerIdea(out);', fn('mineIn'))           # 0.50.0: the orange counts on the tab and the stage
 
     def test_approve_all_parts(self):
         if not shutil.which('node'):

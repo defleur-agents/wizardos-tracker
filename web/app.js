@@ -48,8 +48,8 @@ const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items, open_ship }; filled from the device below (0.26.2)
 // 0.18.1: the last view is remembered per device; first landing is Core features (Goals only if you last used Goals).
-const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) || v === 'me' ? v : 'me'; } catch (_) { return 'me'; } };
-let me = null, view = ({ '#me': 'me', '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
+const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
+let me = null, view = ({ '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -64,7 +64,7 @@ const POP = {
   build: ['WizardOS Builder', 'Writes the code; its own tester tries it before it merges.'],
   ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
   review: ['WizardOS Builder’s tester', 'Tried by the builder’s tester before it merged. Nobody tests it by hand; Doesn’t work still sends it back to Building.'],
-  done: ['Closed', 'The builder closes bugs once its tester passed them. Every feature closes after one yes at its show-and-tell (James for core repos, the person who filed it for apps). Only James closes a goal, once its done-list is ticked.'],
+  done: ['Closed', 'The builder closes bugs once its tester passed them. Every feature closes after one yes at its final approval (James for core repos, the person who filed it for apps). Only James closes a goal, once its done-list is ticked.'],
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
@@ -227,7 +227,7 @@ function show(s) {
   const on = !!s.connected;
   el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
-  for (const x of [el('report-open'), el('goals-btn'), el('me-btn'), document.querySelector('.bd-switch')]) x.hidden = !on;
+  for (const x of [el('report-open'), el('goals-btn'), document.querySelector('.bd-switch')]) x.hidden = !on;
   if (!on) el('builder').hidden = true;   // 0.33: shown by showBuilder only while the builder is paused   // 0.22: the header row's board controls
   if (!on && s.notice) say(s.notice, 'error');
   signinMode(s);
@@ -323,21 +323,18 @@ const sw = document.querySelector('.bd-switch');
 function markView() {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
   el('goals-btn').setAttribute('aria-pressed', String(view === 'goals'));
-  el('me-btn').setAttribute('aria-pressed', String(view === 'me'));
-  el('board').classList.toggle('bd-meview', view === 'me');
 }
 // 0.19.1: the number is every open goal (all goals count the same, whoever looks)
 const GOALS_TIP = 'Open goals';
 function goalsOpen(d) { const g = d && d.groups && d.groups.goals; return g ? Math.max(g.length, d.total || 0) : 0; }
 function goalsBadge() {
-  const n = el('goals-n');
   const k = goalsOpen(cache.goals);
-  n.hidden = !k; n.textContent = k ? String(k) : '';
-  n.title = GOALS_TIP;
-  n.setAttribute('aria-label', k ? `${k}: ${GOALS_TIP.toLowerCase()}` : '');
+  el('goals-t').textContent = k ? `${k} ${k === 1 ? 'goal' : 'goals'}` : 'Goals';   // 0.50.0: a plain count, never a badge
   el('goals-btn').title = k ? `${GOALS_TIP}: ${k}` : 'Goals';
+  waitBadges();
 }
 function pickView(v) {
+  wantMine = false;   // 0.50.0: a tab picked by hand wins over an old #me link still loading
   if (!v || v === view) return;
   view = v; store.set('board.view', v);
   for (const k of Object.keys(stage)) stage[k] = null;   // 0.15: a new tab always starts unfiltered (all stages)
@@ -346,13 +343,12 @@ function pickView(v) {
   try { history.replaceState(null, '', '#' + view); } catch (_) {}
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
-  if (cache[view] || view === 'me') render(cache[view] || cache.me);
-  else { el('secs').replaceChildren(); el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  if (cache[view]) render(cache[view]);
+  else { el('lists').classList.toggle('bd-pipeonly', view !== 'goals'); el('secs').replaceChildren(); el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
 }
 sw.addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) pickView(b.dataset.view); });
 el('goals-btn').onclick = () => pickView('goals');
-el('me-btn').onclick = () => pickView('me');
 
 // 0.13.5: a small refresh button top right; it spins while a reload is in flight, and 'updated 20s ago' says how fresh the list is.
 let inflight = 0, freshAt = 0;
@@ -372,13 +368,12 @@ function freshness() {
 setInterval(freshness, 5000);
 
 async function load(which, refresh = false) {
-  if (which === 'me') return loadMe(refresh);   // 0.39.0: Waiting on me reads every tab
   const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
     cache[which] = dropPending(d);   // 0.38.1: a check still being saved stays off its stage
-    meBadge();
+    waitBadges();
     if (which === 'goals') goalsBadge();
     if (which === view && g === gen && !typing()) render(d);
     if (el('settings').open) tryList();
@@ -387,6 +382,7 @@ async function load(which, refresh = false) {
     if (which !== 'goals') loadDone(which, refresh);
     if (which !== 'goals' && window.FeedbackStage) FeedbackStage.load(refresh);   // 0.26.5: Pending approval (web/feedback-stage.js)
     if (which === view) freshAt = Date.now();
+    goMine();
   } catch (err) {
     if (err.status === 401) { const s = await api('api/status').catch(() => null); if (s) show(s); }
     say(err.message, 'error');
@@ -414,7 +410,6 @@ function reposOf(d, keepWho) {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
-  if (view === 'me') return renderMe();
   if (d.view !== view) return;
   for (const g of Object.values(d.groups || {})) for (const i of g || []) adoptSwitch(i);
   for (const i of (d.items || [])) adoptSwitch(i);
@@ -438,6 +433,8 @@ function render(d) {
   filteredLine(whoSet, chosen, people, repos);
   const goals = d.view === 'goals';
   el('lists').classList.toggle('bd-goalsview', goals);
+  // 0.50.0 (Miguel, 21 Nov): a tab opens on the pipeline alone. Tap a stage for its cards, tap it again to put them away.
+  el('lists').classList.toggle('bd-pipeonly', !goals && !stage[d.view]);
   el('sort-btn').replaceChildren(make('span', 'bd-sort-k', 'Sort: '), (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1]);   // 0.22: phones drop 'Sort: '
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
@@ -467,7 +464,7 @@ function render(d) {
   flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
-  const showing = g => !only ? g !== 'done' : (bin ? bin.groups.includes(g) : false);
+  const showing = g => !!only && !!bin && bin.groups.includes(g);
   el('totals').textContent = d.more && !only ? `showing ${d.shown} of ${d.total}` : '';
   const secs = [];
   let any = false;
@@ -498,9 +495,9 @@ function render(d) {
   if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
   if (refocus) backTo();   // 0.21: just closed an app sheet: stay on the same card and button through repaints
   el('empty').hidden = any;
+  if (!only) { el('empty').hidden = false; el('empty').textContent = whoSet.size || chosen.size ? 'Tap a stage to see what’s in it with this filter.' : 'Tap a stage to see what’s in it.'; return; }
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
-  el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
-    : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
+  el('empty').textContent = `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`;
 }
 // 0.26: a shipped bug's stage from the release lookup (api/done): Merged (waiting) -> For testers -> For everyone.
 function relStage(i) {
@@ -556,7 +553,7 @@ el('sort-btn').onclick = () => {
   const first = list.querySelector('[aria-checked="true"]'); if (first) first.focus();
 };
 
-// Tap a bin: show only that stage; tap it again (or the pill) for everything. Done loads recently closed.
+// Tap a bin: show that stage's cards; tap it again for the pipeline alone (0.50.0). Done loads recently closed.
 function setStage(g) {
   stage[view] = stage[view] === g ? null : g;
   unpop();
@@ -645,8 +642,8 @@ function stageStat(v, key) {
     building: { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
     answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
     airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
-    test: { t: 'review', help: 'Tested: the builder’s tester passed it → closed (or Show-and-tell)', xs: l => l.flatMap(i => i.review_rounds || []) },
-    show: { t: 'show', help: 'Show-and-tell: tested → yes or no (James for core, the filer for apps)', xs: l => l.flatMap(i => i.show_rounds || []) },
+    test: { t: 'review', help: 'Tested: the builder’s tester passed it → closed (or Final approval)', xs: l => l.flatMap(i => i.review_rounds || []) },
+    show: { t: 'show', help: 'Final approval: tested → yes or no (James for core, the filer for apps)', xs: l => l.flatMap(i => i.show_rounds || []) },
     shipping: { t: 'shipping', help: 'Shipping: closed → in a release for everyone', xs: l => l.map(i => gap(i.closed_at, i.everyone_at)) },
     relwait: { t: 'relwait', help: 'Merged: fix merged → in For testers', xs: l => l.map(i => gap(i.handoff_at, i.testers_at)) },
     testers: { t: 'testers', help: 'For testers: in For testers → in For everyone', xs: l => l.map(i => gap(i.testers_at, i.everyone_at)) },
@@ -784,9 +781,9 @@ const STAGE_INFO = {
   james: 'Older core features only: James or Miguel approves before the builder starts. New ones go straight to the builder.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Waiting for the WizardOS Builder to start. It then moves to Building.',
-  airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (a bug closes, a feature goes to Show-and-tell). Nobody needs to do anything.',
+  airev: 'Older hand-backs only: nothing runs AI review since 21 Nov. The builder moves them on (a bug closes, a feature goes to Final approval). Nobody needs to do anything.',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in the reply box on the item (or Approve PR #N when it waits on a pull request): any team member’s reply puts it back in the builder’s queue within 10 minutes.',
-  test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs close by themselves; every feature goes to one show-and-tell (James for core repos, the person who filed it for apps). Works / Needs changes stay here as an optional way to send it back to Building.',
+  test: 'Tested: the WizardOS Builder’s tester tried it on its own machine before it merged. Nobody tests it by hand. Bugs close by themselves; every feature goes to one final approval (James for core repos, the person who filed it for apps). Works / Needs changes stay here as an optional way to send it back to Building.',
   show: 'One yes or no: James for core-repo features, the person who filed it for app features. Approve: the builder turns it on for everyone and closes it. Decline: dropped, and the builder removes its switch. Only the decider sees Approve / Decline (in their Waiting on me); everyone else sees who decides.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
@@ -801,7 +798,7 @@ function binsOf(v) {
     // 0.36.6 (James, 17 Nov): Building is its own stage again, so you see whether the builder is working
     { key: 'queued', word: 'Queued', groups: ['sorting', 'queued'], info: 'corebuild', tip: 'Waiting for the builder' },
     { key: 'building', word: 'Building', groups: ['building'], info: 'building', tip: 'The builder is on it' }, ASK, ...tail,
-    { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
+    { key: 'show', word: 'Final approval', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
   // 0.26 (Miguel, 11 Nov): a bug's stages are where its fix is in the release cycle. Nothing after the merge waits on
@@ -811,12 +808,12 @@ function binsOf(v) {
     { key: 'testers', word: 'For testers', groups: ['testers'], info: 'testers', tip: 'In the For testers release' },
     { key: 'done', word: 'For everyone', groups: ['done'], info: 'everyone', tip: 'In the release for everyone (Stable), or the app’s Store release' }];
   return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ASK, ...tail,
-    { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];   // 0.44.0: app features have one too (the filer decides)
+    { key: 'show', word: 'Final approval', groups: ['show'] }, ...end];   // 0.44.0: app features have one too (the filer decides)
 }
 function sectionsOf(v) {
   if (v === 'bugs') return [['answer', 'Needs an answer'], ['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
-  return [['test', 'Tested by the builder'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
+  return [['test', 'Tested by the builder'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Final approval'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || g !== 'james' && (v !== 'bugs' || g !== 'show'));
 }
@@ -831,7 +828,8 @@ function strip(d, bins, groups) {
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
     b.setAttribute('aria-pressed', String(only === x.key));
-    b.setAttribute('aria-label', `${x.word}${human ? ' (human step)' : ''}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
+    const mineN = lists.reduce((a, l) => a + (l ? l.filter(myTurn).length : 0), 0);   // 0.50.0: what waits on you in this stage
+    b.setAttribute('aria-label', `${x.word}${human ? ' (human step)' : ''}: ${count == null ? 'counting' : count}${mineN ? `, ${mineN} waiting on you` : ''}. ${only === x.key ? 'Hide these' : 'Show ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
     const w = make('span', 'bd-bin-w', x.word + ' ');
     const info = make('button', 'bd-i bd-i-s'); info.type = 'button'; info.setAttribute('aria-label', 'What happens in ' + x.word); info.append(infoIcon());
@@ -840,6 +838,7 @@ function strip(d, bins, groups) {
     if (x.tip) { li.title = x.tip; b.title = x.tip; }
     if (human) { li.title = 'Human step · ' + (x.tip || x.word); li.append(humanTag()); }
     li.append(b, w);
+    if (mineN) li.append(waitMark(mineN));
     li.onclick = () => setStage(x.key);
     out.push(li);
   });
@@ -1590,7 +1589,7 @@ function whereLine(i) {
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
   // 0.43.0: tested by the builder's tester before merge; nobody has to check it
-  if (g === 'test') return [i.kind !== 'feature' && i.category !== 'app' && i.category !== 'core' || i.kind === 'bug' ? 'Tested by the builder · it closes by itself' : i.category === 'core' ? 'Tested by the builder · next: James’s show-and-tell' : 'Tested by the builder · next: show-and-tell for the person who filed it', ''];
+  if (g === 'test') return [i.kind !== 'feature' && i.category !== 'app' && i.category !== 'core' || i.kind === 'bug' ? 'Tested by the builder · it closes by itself' : i.category === 'core' ? 'Tested by the builder · next: James’s final approval' : 'Tested by the builder · next: final approval by the person who filed it', ''];
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Older hand-back · the builder moves it on', ''];
   if (g === 'answer' && i.answered) return ['Answered · back to the builder within 10 minutes', ''];   // 0.42.0
@@ -1606,7 +1605,7 @@ function whereLine(i) {
 // 0.25.1 (Miguel, 11 Nov): the headline of every card that waits on someone: 'Waiting on <name>', the person or
 // agent named, never a vague 'Your turn'. AI review names the agent (or the agents that may do it).
 // 0.43.0: Tested (test) and old AI review items wait on nobody: the builder closes or moves them on
-const WAIT_WHAT = { answer: 'to answer the builder', james: 'to approve or decline', show: 'for show-and-tell' };
+const WAIT_WHAT = { answer: 'to answer the builder', james: 'to approve or decline', show: 'for final approval' };
 function waitHead(i) {
   if (i.nextrel) return null;
   const g = i.group, wo = i.waiting_on || {};
@@ -1614,7 +1613,7 @@ function waitHead(i) {
   const who = (wo.who || []).filter(Boolean);
   if (!who.length) return null;
   const me = (cache[view] || {}).me_person || Object.values(cache).map(c => c && c.me_person).find(Boolean) || '';
-  if (view === 'me' && who.every(w => w === me)) return null;   // 0.49.0: everything in Waiting on me waits on you
+  if (sortBy[view] === 'turn' && myTurn(i) && who.every(w => w === me)) return null;   // it sits under the 'Waiting on you' divider
   if (g === 'test' && wo.what) {
     // 0.35.0: a Human review item someone else has to act on first: 'Waiting on James: Mac build'
     const p = make('p', 'bd-waiton bd-waiton-other' + (who.some(w => w === me) ? ' me' : ''));
@@ -1656,7 +1655,7 @@ function itemCard(i) {
   if (fb) c.insertBefore(fb, top);
   if (i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'))) {   // 0.37.0
     const ux = make('span', 'bd-fbchip src small', 'UX tweak · auto-approved');
-    ux.title = 'Robert\u2019s fast lane: approved as filed, no show-and-tell';
+    ux.title = 'Robert\u2019s fast lane: approved as filed, no final approval';
     c.insertBefore(ux, top);
   }
   const [text, cls] = whereLine(i);
@@ -2257,7 +2256,7 @@ async function decideAct(i, decision, note) {
   }
   for (const id of ids) details.delete(id);
   if (el('detail').open && ids.has(openId)) WzSheet.close(el('detail'));
-  const paint = () => { if (cache[view]) render(cache[view]); meBadge(); };
+  const paint = () => { if (cache[view]) render(cache[view]); waitBadges(); };
   paint();
   try {
     const r = await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined });
@@ -2309,7 +2308,7 @@ function updateFor(v, i) {
 const LIGHT = { working: 'In progress', blocked: 'Blocked', review: 'Pending final review' };
 const OLD_LIGHT = { green: 'working', yellow: 'working', red: 'blocked' };
 const stOf = s => { const v = s && (s.status || s.color); return OLD_LIGHT[v] || (LIGHT[v] ? v : 'working'); };
-const STAGE_WORD = { sorting: 'sorting', answer: 'needs an answer', test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
+const STAGE_WORD = { sorting: 'sorting', answer: 'needs an answer', test: 'human review', show: 'final approval', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
   if (order) list.sort(order);
@@ -2440,7 +2439,7 @@ function roles(i) {
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
   if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · built and merged by the builder · For testers, then For everyone with the releases · anyone may check it (optional) · Doesn’t work reopens it`; return; }
-  r.textContent = `Filed by ${who} · built and tested by the builder · one show-and-tell: ${i.decider || (i.category === 'core' ? 'James' : who)} approves or declines · then Shipping until it’s in a release for everyone`;
+  r.textContent = `Filed by ${who} · built and tested by the builder · one final approval: ${i.decider || (i.category === 'core' ? 'James' : who)} approves or declines · then Shipping until it’s in a release for everyone`;
 }
 // 0.26.1 (Miguel, 11 Nov): Check it opens a short check card, not the GitHub thread: what changed and how to check
 // it in plain words (the builder's hand-back), Before / After, then Open <app> · Works · Doesn't work. The issue text,
@@ -3475,7 +3474,7 @@ function appRow(a, st) {
   if (st.k === 'ready') r.append(smallBtn('Update', x => updateApp(a.id, x)));
   else if (st.k === 'failed') r.append(smallBtn('Retry', x => { delete wizFail[a.id]; store.set('board.wizfail', wizFail); updateApp(a.id, x); }));
   else if (st.k === 'stopped') r.append(smallBtn(a.update ? 'Start and update' : 'Start', x => updateApp_(a.id, x)));
-  else if (st.k === 'queued') { const q = queueGet(); if (q && q.todo.some(x => x.key === a.id)) r.append(smallBtn('Remove', () => { queue = queueGet(); if (queue) { queue.todo = queue.todo.filter(x => x.key !== a.id); queueSave(); } paintWizards(); renderMeSoon(); })); }
+  else if (st.k === 'queued') { const q = queueGet(); if (q && q.todo.some(x => x.key === a.id)) r.append(smallBtn('Remove', () => { queue = queueGet(); if (queue) { queue.todo = queue.todo.filter(x => x.key !== a.id); queueSave(); } paintWizards(); })); }
   return r;
 }
 function updatesPicture(apps, opts) {
@@ -3498,7 +3497,6 @@ function updatesPicture(apps, opts) {
   return out;
 }
 function paintWizards() {
-  if (view === 'me') renderMeSoon();
   if (!el('settings').open || !catalog) return;
   const w = el('um-body'), u = updates || {};
   const host = /^[0-9.]+$|^localhost$/.test(location.hostname) ? 'This Wizard' : location.hostname.split('.')[0];
@@ -3538,56 +3536,34 @@ setInterval(() => {
   catalog = null; loadCatalog(true).then(() => { paintWizards(); selfUpdate(); }).catch(() => {});
 }, 5000);
 
-// ---------- 0.39.0 Waiting on me (Miguel, 18 Nov): one place for everything that waits on the signed-in person ----------
-// 0.45.0 (Miguel, 21 Nov: 'pick one'): the ONE place and the ONE count. Three sections only: To approve (show-and-tell
-// items this person decides), Questions for you (builder:blocked naming them), Goals needing a status (James only).
-// The badge is meItems().length, the same rule as the server's api/needs-you (needs_you_split) over the same served
-// board answers. The cards are the tabs' own cards, so Approve / Decline happen right here.
-cache.me = { view: 'me', groups: {} };
-let meTimer = 0;
-function renderMeSoon() { clearTimeout(meTimer); meTimer = setTimeout(() => { if (view === 'me' && !typing() && !document.querySelector('.bd-confirm')) renderMe(); }, 50); }
-function meItems() {
+// ---------- Waiting on you ----------
+// 0.50.0 (Miguel, 21 Nov): the Waiting on me screen is gone. What waits on you (a final approval you decide, a builder
+// question to you, a goal of yours needing a status) is an orange count on its tab and on its stage; tap them to get there.
+function mineIn(v) {
   const seen = new Set(), out = [];
-  for (const v of ['goals', ...VIEWS.filter(x => x !== 'goals')]) for (const l of Object.values((cache[v] || {}).groups || {})) for (const i of l || [])
-    if (i && !seen.has(i.id) && myTurn(i)) { seen.add(i.id); out.push(i); }
+  for (const l of Object.values((cache[v] || {}).groups || {})) for (const i of l || []) if (i && !seen.has(i.id) && myTurn(i)) { seen.add(i.id); out.push(i); }
   return onePerIdea(out);   // 0.48.0: an idea of several pieces waits once
 }
-const ME_KINDS = [['approve', 'To approve'], ['answer', 'Questions for you'], ['goals', 'Goals needing a status']];
-const meKind = i => i.group === 'show' ? 'approve' : i.group === 'answer' ? 'answer' : 'goals';
-function meCount() { return meItems().length; }
-function meBadge() { const n = el('me-n'); if (!n) return; const k = meCount(); n.hidden = !k; n.textContent = k ? String(k) : ''; el('me-btn').title = k ? `Waiting on me: ${k}` : 'Waiting on me'; }
-let meFetched = 0;
-async function loadMe(refresh) {
-  // 0.45.0: the server keeps each tab's answer and re-reads GitHub behind it, so the 30-second tick never asks for a
-  // fresh crawl; only Reload ('hard') does, at most every 2 minutes
-  refresh = refresh === 'hard' && Date.now() - meFetched > 120000;
-  if (refresh) meFetched = Date.now();
-  lastLoad = Date.now(); inflight++; freshness();
-  try {
-    await Promise.all(VIEWS.map(v => api(`api/split?view=${v}${refresh ? '&refresh=1' : ''}`).then(d => { cache[v] = dropPending(d); if (v === 'goals') goalsBadge(); }).catch(() => {})));
-    freshAt = Date.now(); say('');
-  } finally { inflight = Math.max(0, inflight - 1); freshness(); }
-  if (view === 'me') renderMe(); else meBadge();
+function waitMark(k) {
+  const n = make('b', 'bd-wait-n', String(k)); n.title = `${k} waiting on you`; n.setAttribute('aria-label', `${k} waiting on you`);
+  return n;
 }
-function renderMe() {
-  meBadge();
-  if (view !== 'me') return;
-  for (const id of ['totals', 'filtered']) el(id).textContent = '';
-  el('strip').replaceChildren();
-  const secs = [];
-  const loading = VIEWS.some(v => !cache[v]);
-  const items = meItems();   // 0.45.0: updates stay in the main screen's Update bar and Settings, Feedback on its tabs
-  for (const [k, title] of ME_KINDS) {
-    const l = items.filter(i => meKind(i) === k); if (!l.length) continue;
-    const s = make('section', 'bd-sec' + (k === 'approve' ? ' bd-human-sec' : '')); s.id = 'sec-me-' + k;
-    const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(l.length)));
-    if (k === 'approve') { h.classList.add('bd-human'); h.prepend(humanTag()); }   // 0.46.0: show-and-tell, a human step
-    const list = make('div', 'bd-list'); list.replaceChildren(...l.map(itemCard));
-    s.append(h, list); secs.push(s);
+function waitBadges() {
+  for (const n of document.querySelectorAll('[data-wait]')) {
+    const k = mineIn(n.dataset.wait).length;
+    n.hidden = !k; n.textContent = k ? String(k) : ''; n.title = k ? `${k} waiting on you` : ''; n.setAttribute('aria-label', n.title);
   }
-  el('secs').replaceChildren(...secs);
-  el('empty').hidden = !!secs.length;
-  el('empty').textContent = loading ? 'Loading…' : 'Nothing is waiting on you. Nice.';
+}
+// An old link to #me opens the tab and the stage that hold the most waiting on you.
+let wantMine = location.hash === '#me';
+function goMine() {
+  if (!wantMine || !['core', 'apps', 'bugs'].every(v => cache[v])) return;
+  wantMine = false;
+  const [v, l] = ['apps', 'core', 'bugs'].map(x => [x, mineIn(x)]).sort((p, q) => q[1].length - p[1].length)[0];
+  if (!l.length) return;
+  pickView(v);
+  stage[v] = l[0].group === 'answer' ? 'answer' : 'show';
+  render(cache[v]);
 }
 
 // ---------- 0.17 Settings › Try changes: every switch in Human review, on/off, the same toggles as on the cards ----------
@@ -3613,7 +3589,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.49.0';
+const PAGE_VERSION = '0.50.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3696,7 +3672,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.49.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.50.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3722,14 +3698,14 @@ async function openLinked() {
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); waitBadges(); goMine(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
-el('reload').onclick = () => { if (!inflight) { load(view, view === 'me' ? 'hard' : true); loadSide(); } };
+el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
 
 // ---------- 0.34.0 Needs you badge (switch needs-you-badge, humanitylabs-org/wizardos-tracker#87) ----------
 // The Wizard app badge shows how many items actually wait on the signed-in person (GET api/needs-you: the server's

@@ -1048,8 +1048,6 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 }
 
 /* 0.39.0 Waiting on me + the updates picture */
-.bd-me-n:not([hidden]) { background: var(--accent); color: var(--on-accent); }
-.bd-meview .bd-tools, .bd-meview .bd-strip { display: none; }
 .bd-me-tools { display: inline-flex; gap: 8px; margin-left: auto; }
 .bd-me-upd > .bd-sec-h { display: flex; align-items: center; gap: 8px; }
 .bd-upd-sec { margin-top: 12px; }
@@ -1057,7 +1055,6 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-upd-sec > summary::-webkit-details-marker { display: none; }
 .bd-st-updating .bd-meta, .bd-st-queued .bd-meta { color: var(--accent); }
 .bd-st-failed .bd-meta, .bd-st-stopped .bd-meta { color: var(--wz-danger, var(--ink-2)); }
-@media (max-width: 520px) { .bd-me-btn .bd-goals-t { display: none; } }
 
 /* 0.42.0: reply box and Approve PR on the item detail */
 .bd-d-reply { margin-top: var(--wz-space-3); }
@@ -1130,4 +1127,22 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   .bd-strip .bd-bin-n { font-size: 1.15rem; }
   .bd-strip .bd-bin-w { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; white-space: normal; max-width: 100%; font-size: .6rem; line-height: 1.15; text-align: center; text-wrap: balance; }
   .bd-strip .bd-human-w { display: none; }
+}
+
+/* 0.50.0 (Miguel, 21 Nov): the pipeline first. A tab opens on the strip alone; the tools row comes with a stage's cards.
+   An orange count marks the tab and the stage that hold what waits on you. Goals reads '8 goals', never a badge. */
+.bd-pipeonly .bd-tools { display: none; }
+.bd-pipeonly .bd-empty { margin-top: var(--wz-space-3); }
+.bd-wait-n { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--bd-human); color: var(--canvas); font-size: .6875rem; font-weight: 800; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.bd-wait-n[hidden] { display: none; }
+.bd-switch .bd-wait-n, .bd-goals-btn .bd-wait-n { margin-left: 5px; vertical-align: 1px; }
+.bd-binx { position: relative; }
+.bd-binx > .bd-wait-n { position: absolute; top: -7px; right: -5px; box-shadow: 0 0 0 2px var(--canvas); }
+.bd-strip, .bd-strip .bd-steps, .bd-strip .bd-binx { overflow: visible; }
+.bd-strip .bd-binx > .bd-bin-w { overflow: hidden; }
+.bd-hbar .bd-goals-t { display: inline; white-space: nowrap; }
+@media (max-width: 599px) {
+  .bd-strip { overflow: visible; padding-top: 8px; }
+  .bd-strip .bd-steps { gap: 3px; }
+  .bd-strip:has(.bd-stepli:nth-child(15)) .bd-bin-w { font-size: .54rem; letter-spacing: -.02em; }   /* eight stages across a phone, no word cut */
 }

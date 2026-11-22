@@ -47,15 +47,17 @@ class WaitingOnMe(unittest.TestCase):
     def test_button_and_view(self):
         from test_036 import ROOT
         html = (ROOT / 'web/index.html').read_text()
-        self.assertIn('id="me-btn" data-view="me"', html)
-        self.assertIn("if (which === 'me') return loadMe(refresh);", JS)
-        for k in ("['answer', 'Questions for you']", "['approve', 'To approve']", "['goals', 'Goals needing a status']"):
-            self.assertIn(k, JS)
+        # 0.50.0 (Miguel, 21 Nov): no separate screen; an orange count on the tab and the stage instead
+        self.assertNotIn('me-btn', html + JS)
+        for k in ('loadMe', 'renderMe', 'Questions for you', 'To approve'):
+            self.assertNotIn(k, JS)
+        for v in ('core', 'apps', 'bugs', 'goals'):
+            self.assertIn(f'<b class="bd-wait-n" data-wait="{v}" hidden></b>', html)
         for k in ("['test', 'To try']", "'Feedback to approve '", "'Updates on this Wizard '"):   # 0.45.0: one place, one count
             self.assertNotIn(k, JS)
 
-    def test_default_view_is_waiting_on_me(self):
-        self.assertIn("return VIEWS.includes(v) || v === 'me' ? v : 'me'; } catch (_) { return 'me'; }", JS)
+    def test_default_view_is_core(self):
+        self.assertIn("return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; }", JS)
 
 
 if __name__ == '__main__':

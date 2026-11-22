@@ -168,6 +168,7 @@ console.log(JSON.stringify([w('core'), w('apps'), w('bugs'), sectionsOf('apps').
     def test_card_headline_and_question(self):
         src = ("const make = (t, c, x) => ({ c, x, kids: [], append(...k) { this.kids.push(...k); } });\n"
                "const document = { createTextNode: x => ({ x }) }; const cache = {}; const view = 'apps';\n"
+               "const sortBy = {}; const myTurn = () => false;\n"
                "const WAIT_WHAT = " + JS.split('const WAIT_WHAT = ')[1].split(';')[0] + ';\n' + fn('waitHead') + '\n'
                + fn('whereLine') + """
 const i = { group: 'answer', question: 'Should it stay off?', waiting_on: { who: ['Miguel', 'James'], kind: 'person' } };

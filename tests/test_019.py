@@ -135,7 +135,7 @@ console.log(JSON.stringify([binsOf('bugs').map(b => b.word), binsOf('apps').map(
   sectionsOf('apps').map(s => s[1]).includes('Filed')]));"""
         bins, apps, filer, queued, filed = self.run_js(src)
         self.assertEqual(bins, ['Queued', 'Building', 'Needs an answer', 'Merged', 'For testers', 'For everyone'])   # 0.26, 0.28
-        self.assertEqual(apps, ['Queued', 'Building', 'Needs an answer', 'AI review', 'Tested', 'Show-and-tell', 'Shipping', 'Done'])   # 0.44.0
+        self.assertEqual(apps, ['Queued', 'Building', 'Needs an answer', 'AI review', 'Tested', 'Final approval', 'Shipping', 'Done'])   # 0.44.0; 0.50.0: its name on the page
         self.assertEqual(filer, 'Merged · checking releases…')   # 0.25.1: 'Waiting on <who>' is the card's headline (waitHead)
         self.assertEqual(queued, 'Queued · Oscar builds this one')
         self.assertFalse(filed)

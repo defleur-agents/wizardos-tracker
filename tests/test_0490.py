@@ -56,17 +56,19 @@ class Logic(unittest.TestCase):
         out = node(fn('authorsOf') + "console.log(JSON.stringify(authorsOf({groups: {a: [{author: 'JanMesaric'}, {author: 'janmesaric'}, {author: 'JanMesaric'}], b: [{author: 'jdefleur'}]}})));")
         self.assertEqual(out, [['JanMesaric', 3], ['jdefleur', 1]])
 
-    def test_waiting_on_me_does_not_say_waiting_on_you(self):
+    def test_under_the_waiting_on_you_divider_a_card_does_not_repeat_it(self):
+        # 0.50.0: the Waiting on me screen is gone; the cards that wait on you lead their stage under one divider
         stub = """
 class N { constructor(){this.children=[];} append(...c){this.children.push(...c);} }
 const make = (t, c, x) => { const n = new N(); n.textContent = x || ''; return n; };
 const document = { createTextNode: t => ({ textContent: t }) };
-const cache = { me: {}, core: { me_person: 'Miguel' } };
+const cache = { core: { me_person: 'Miguel' } };
+const sortBy = { core: 'turn', apps: 'oldest' }; const myTurn = i => !!i.turn;
 """
-        src = stub + 'const WAIT_WHAT = { show: "for show-and-tell" };' + fn('waitHead') + """
-const mine = { group: 'show', waiting_on: { who: ['Miguel'] } }, his = { group: 'show', waiting_on: { who: ['James'] } };
-let view = 'me'; const a = [waitHead(mine) === null, waitHead(his) !== null];
-view = 'core'; a.push(waitHead(mine) !== null);
+        src = stub + 'const WAIT_WHAT = { show: "for final approval" };' + fn('waitHead') + """
+const mine = { group: 'show', turn: true, waiting_on: { who: ['Miguel'] } }, his = { group: 'show', waiting_on: { who: ['James'] } };
+let view = 'core'; const a = [waitHead(mine) === null, waitHead(his) !== null];
+view = 'apps'; a.push(waitHead(mine) !== null);   // another sort: no divider, so the card says it
 console.log(JSON.stringify(a));"""
         self.assertEqual(node(src), [True, True, True])
 

@@ -120,8 +120,8 @@ class Rendered(unittest.TestCase):
 
     def test_item_flow_line(self):
         f = self.out['flow']
-        self.assertEqual([x['word'] for x in f if x['human']], ['Show-and-tell'])
-        self.assertTrue(next(x for x in f if x['word'] == 'Show-and-tell')['cur'])
+        self.assertEqual([x['word'] for x in f if x['human']], ['Final approval'])
+        self.assertTrue(next(x for x in f if x['word'] == 'Final approval')['cur'])
 
 
 if __name__ == '__main__':
