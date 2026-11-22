@@ -3660,7 +3660,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.54.1';
+const PAGE_VERSION = '0.54.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3715,6 +3715,7 @@ function updateOne(key, btn) {
   // app updates are under way: WizardOS goes after them (the queue's order), never on top of them
   askPop(btn, 'Update WizardOS after the updates that are running? Wizard restarts for a moment.', 'Update', () => { queueStart([{ key: 'os', name: 'WizardOS' }]); });
 }
+const UPD_OPEN = 'board.updopen';
 function selfUpdate() {
   const box = el('selfupd'); if (!box) return;
   const running = [...runs.values()].filter(r => r && r.state !== 'done' && r.state !== 'failed');
@@ -3743,6 +3744,22 @@ function selfUpdate() {
   if (!out.length && !list.length && !fails.length) { box.hidden = true; return box.replaceChildren(); }
   box.className = 'bd-selfupd'; box.hidden = false;
   if (!list.length) return box.replaceChildren(...out, ...fails);
+  // 0.54.2 (Miguel, 22 Nov: 'too big, too many words'): while something isn't updated, a small pill that always stays:
+  // what is ready, one button, and a chevron that opens the full list (kept open or closed on this device).
+  const open_ = store.get(UPD_OPEN) === true;
+  if (!open_) {
+    const pill = make('div', 'bd-updpill' + (bad ? ' bad' : ''));
+    const word = list.length === 1 ? `${cap(list[0].name)} update` : `${list.length} updates`;
+    pill.append(make('i', 'bd-work-dot'), make('span', 'bd-updpill-t', bad && list.length === 1 ? `${cap(list[0].name)} update failed` : word + ' ready'));
+    const doIt = all.length ? smallBtn(all.length === 1 ? 'Update' : 'Update all', b => { b.disabled = true; queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed()))).finally(() => checkSelfUpdate(true)); })
+      : smallBtn('Try again', b => updateOne('os', b));
+    doIt.classList.add('bd-mini-go'); doIt.id = 'selfupd-go';
+    const more = make('button', 'bd-updpill-more', '⌄'); more.type = 'button'; more.setAttribute('aria-label', 'Show details'); more.title = 'Details';
+    more.onclick = () => { store.set(UPD_OPEN, true); selfUpdate(); };
+    pill.append(doIt, more);
+    box.className = 'bd-selfupd bd-selfupd-min';
+    return box.replaceChildren(...out, pill, ...fails);
+  }
   const names = list.map(x => x.name);
   const t = make('span', 'bd-selfupd-t', list.length === 1 ? `An update is ready: ${names[0]}.` : `${list.length} updates ready: ${names.join(', ')}.`);
   const head = [t];
@@ -3754,6 +3771,9 @@ function selfUpdate() {
     };
     head.push(go);
   }
+  const less = make('button', 'bd-updpill-more', '⌃'); less.type = 'button'; less.setAttribute('aria-label', 'Show less'); less.title = 'Show less';
+  less.onclick = () => { store.set(UPD_OPEN, false); selfUpdate(); };
+  head.push(less);
   const rows = [];
   if (list.length > 1 || bad || out.length || list.some(x => wizFail[x.key])) for (const x of list) {
     const os = x.key === 'os', a = os ? null : fresh(x.key);
@@ -3785,7 +3805,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
