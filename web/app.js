@@ -1963,6 +1963,12 @@ function actionArea(i, inDetail) {
     // 0.49.0: the card's first line already says who it waits on; 'X decides' only when that line is missing
     // 0.51.0 (Miguel, 22 Nov): an idea filed by the person who approves it is approved by itself after 7 quiet days; the card says when
     const auto = i.auto_at && !isNaN(new Date(i.auto_at)) ? make('span', 'bd-why-s bd-auto', `Turns on for everyone by itself on ${new Date(i.auto_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} unless declined`) : null;
+    if (!i.can_decide && i.can_behalf) {   // 0.53.0: 'James approves', pressed for him; the comment says who pressed it
+      const d_ = i.decider || 'James';
+      const yb = smallBtn(`${d_} approves`, b => askPop(b, `Approve on ${d_}\u2019s behalf? Only once he has said yes. The comment on the item says you pressed it.`, `${d_} approves`, () => decideAct(i, 'yes', '', true)));
+      yb.classList.add('bd-mini-go');
+      row.append(yb); if (auto) row.append(auto); return row;
+    }
     if (!i.can_decide) { const said = !!waitHead(i); if (!said) row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); if (auto) row.append(auto); return said && !tg0 && !t0.run && !auto ? null : row; }
     const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
     const yes = smallBtn('Approve', b => askPop(b, (n > 1 ? `Approve all ${n} parts?` : 'Approve?') + ' The builder turns it on for everyone and closes it.', 'Approve', () => decideAct(i, 'yes', '')));
@@ -2248,7 +2254,7 @@ async function notDupe(i, b) {
 }
 // 0.45.0 (Miguel, 21 Nov): Approve / Decline at a show-and-tell (POST api/decide, the decider only). The card leaves
 // every tab and Waiting on me at once and the count drops with it; if GitHub refuses, it comes back with the reason.
-async function decideAct(i, decision, note) {
+async function decideAct(i, decision, note, behalf) {
   hold(false);
   const took = [];
   const ids = new Set([i.id]);
@@ -2261,12 +2267,12 @@ async function decideAct(i, decision, note) {
   const paint = () => { if (cache[view]) render(cache[view]); waitBadges(); };
   paint();
   try {
-    const r = await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined });
+    const r = await api('api/decide', { repo: i.repo, number: i.number, decision, note: note || undefined, ...(behalf ? { on_behalf: true } : {}) });
     const bad = new Set(((r && r.parts) || []).filter(p => !p.ok && !p.skipped).map(p => p.id));
     if (bad.size) {   // 0.48.0: GitHub refused some parts: those come back, and the line says how many
       for (const [d, g, k, x] of took.reverse()) if (bad.has(x.id)) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = onePerIdea(d.groups[g]).length; }
       paint(); say(`Couldn’t save that: ${bad.size} of ${r.parts.length} parts could not be updated.`, 'error');
-    } else toast(decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
+    } else toast(behalf ? `Approved for ${i.decider || 'James'}: the builder turns it on for everyone.` : decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
     needsBadge();
     return true;
   } catch (err) {
@@ -2543,7 +2549,8 @@ function checkFinishes(i, d) {
 function closeCtl(d) {
   const b = el('d-close');
   detailNow = d;
-  b.hidden = !d || !d.state || checkFinishes(d && openItem && openItem.id === d.id ? openItem : null, d);
+  b.hidden = !d || !d.state || checkFinishes(d && openItem && openItem.id === d.id ? openItem : null, d)
+    || (d.state !== 'closed' && d.kind !== 'goal');   // 0.53.0 (Miguel, 22 Nov): no Mark done; the pipeline closes items
   if (d && d.state) b.textContent = d.state === 'closed' ? 'Reopen' : d.kind === 'goal' ? 'Close goal' : 'Mark done';
   // 0.17: everyone sees it; it is greyed out (with the reason on tap) for anyone who may not use it
   if (d) b.setAttribute('aria-disabled', String(!d.can_close));
@@ -3634,7 +3641,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.52.0';
+const PAGE_VERSION = '0.53.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3759,7 +3766,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.52.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.53.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

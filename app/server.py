@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.52.0'
+VERSION = '0.53.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3157,7 +3157,10 @@ def board_split(person, args):
             idea = ideas.get(iid.lower())
             dec = idea['decider'] if idea else show_decider(repo, author, n.get('body'), base, _author_lookup(acct))
             mine_dec = bool(login) and dec.lower() == person_of(login, base).lower() and on_team(login, base)
-            extra = {'decider': dec, 'can_decide': mine_dec, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
+            # 0.53.0 (Miguel, 22 Nov; back from 0.38.3): anyone on the team may press 'James approves' for him once he
+            # OKed it; the comment names who pressed it. It stays James's turn, not the presser's.
+            behalf = (not mine_dec) and on_team(login, base) and dec.lower() == base['show_deciders']['core'].lower()
+            extra = {'decider': dec, 'can_decide': mine_dec, 'can_behalf': behalf, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
             pieces = [listed[x.lower()] for x in idea['parts']] if idea else []
             extra['idea'] = idea['idea'] if idea else iid
             extra['auto_at'] = idea.get('auto_at') if idea else None   # 0.51.0: approved by itself then, unless declined
@@ -5595,11 +5598,19 @@ def decide(person, args, agent=False):
     author = (cur.get('user') or {}).get('login') or ''
     decider = idea['decider'] if multi else show_decider(full, author, cur.get('body'), base, _author_lookup(acct))
     me = person_of(login, base)
-    if not on_team(login, base) or me.lower() != decider.lower():
+    behalf = bool(args.get('on_behalf')) and me.lower() != decider.lower()
+    if behalf:
+        # 0.53.0: 'James approves' pressed by someone else on the team: yes only, only for the core decider
+        if decision != 'yes' or decider.lower() != base['show_deciders']['core'].lower() or not on_team(login, base):
+            raise Problem(403, f'Only a yes can be pressed on {base["show_deciders"]["core"]}\u2019s behalf, and only for his items.', 'not_behalf')
+    elif not on_team(login, base) or me.lower() != decider.lower():
         raise Problem(403, f'This one is {decider}\u2019s to decide' + (' (or their agent).' if not agent else ', not this agent\u2019s person.'), 'not_decider')
     via = ''
     if agent or filed_by_agent(login, base):
         via = ' via ' + (next((a['name'] for t in base['team'] for a in t['agents'] if a['login'].lower() == login.lower()), '') or 'their agent')
+    if behalf:
+        via += f', pressed on {decider}\u2019s behalf by {me or login}'
+        me = decider
     said = (me, login, via, note)
     root = iid
     if not multi:
@@ -5978,7 +5989,7 @@ TOOLS = [
     {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
     {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has. Pieces of one idea (same switch, or a 'Part of: <repo>#<n>' line) share idea (the root's id) and parts; counts and ideas count ideas, not pieces.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
-    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, **ASKED}, 'required': ['decision', 'owner_request']}},
+    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, 'on_behalf': {'type': 'boolean', 'description': "0.53.0: yes on James's behalf (core items) after he OKed it; the comment names who pressed it."}, **ASKED}, 'required': ['decision', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
