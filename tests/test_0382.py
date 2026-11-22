@@ -24,6 +24,7 @@ const store = { get: k => (k in disk ? JSON.parse(disk[k]) : null), set: (k, v) 
 const runs = new Map(), wizFail = {}, calls = [];
 const sleep = ms => new Promise(r => setImmediate(r));
 const selfUpdate = () => {};
+let updates = null;   // 0.50.1: the queue reads the WizardOS state (an app waits while it installs)
 const loadCatalog = async () => {};
 let pending = [];
 const pendingUpdates = () => pending.map(k => ({ key: k, name: k }));
@@ -110,7 +111,7 @@ console.log(JSON.stringify({ calls, last: store.get('board.updq.last'), open: qu
     def test_wiring(self):
         self.assertIn('if (queueOpen() && !draining) drainQueue()', JS)
         self.assertIn("document.addEventListener('visibilitychange', () => { if (!document.hidden && queueOpen() && !draining) checkSelfUpdate(true); });", JS)
-        self.assertIn('queueStart(pendingUpdates())', JS)
+        self.assertIn("queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed())))", JS)   # 0.50.1
         self.assertIn("didn’t update: ${f.reason}", JS)
         self.assertNotIn('for (const x of pendingUpdates()) { await', JS)   # the old page-memory loop is gone
 
