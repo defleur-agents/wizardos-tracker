@@ -23,7 +23,7 @@ class Work(unittest.TestCase):
         self.assertEqual(server.builder_status()['work']['pool'], 48)
 
     def test_page_line(self):
-        self.assertIn('function workLine(b)', JS)
+        self.assertIn('function workLine(b)', JS); self.assertIn('bd-work-c', JS)
         self.assertIn('id="workload"', (ROOT / 'web' / 'index.html').read_text())
 
 

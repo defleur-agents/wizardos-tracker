@@ -930,8 +930,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-shot { font-weight: 600; color: var(--accent); }
 
 /* 0.26.1: Check it = a short check card; the GitHub thread hides behind 'Show the full history' */
-.bd-workload { margin: 0 0 var(--wz-space-2); font-size: var(--wz-text-sm); line-height: 1.45; color: var(--ink-2); }
-.bd-workload b { color: var(--ink); font-weight: 600; }
+.bd-workload { max-width: 680px; margin: 0 auto var(--wz-space-2); }
+.bd-workload[hidden] { display: none; }
+.bd-work-c { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--fill); font: inherit; font-size: var(--wz-text-sm); color: var(--ink-2); white-space: nowrap; cursor: pointer; }
+.bd-work-c b { color: var(--ink); font-weight: 600; }
+.bd-work-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bd-ok); }
+.bd-work-c.stale .bd-work-dot { background: var(--bd-warn); }
+.bd-work-c.off .bd-work-dot { background: var(--ink-3); }
+.bd-work-r { display: flex; justify-content: space-between; gap: var(--wz-space-4); margin: 0 0 4px; font-size: var(--wz-text-sm); }
 .bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
 .bd-checkmode #d-comments-h, .bd-checkmode #d-comments, .bd-checkmode #d-reply:not(.bd-d-reply-ask) { display: none; }
 /* 0.52.0: the card opens on what to do; the summary shows only while the history is folded */
