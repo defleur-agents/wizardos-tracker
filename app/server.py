@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.49.0'
+VERSION = '0.50.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3873,7 +3873,7 @@ STEP_TEXT = {
     'tester': {'bugs': ("The WizardOS Builder's tester tries the fix on its own machine before it merges. Passed: merged switched on "
                         "and closed automatically. Failed: back to Building. Nobody tests it by hand."),
                'features': ("The WizardOS Builder's tester tries it on its own machine before it merges. Passed: merged switched "
-                            "off, then Show-and-tell. Failed: back to Building. Nobody tests it by hand.")},
+                            "off, then Final approval. Failed: back to Building. Nobody tests it by hand.")},
     # 0.46.0 (Miguel, 21 Nov 2026): the pipeline has exactly two human steps, Pending approval and Show-and-tell.
     'feedback': ("Human step. Sent from the Feedback app by someone outside the team (or not signed in): a team member "
                  "approves it (as a bug or an idea; it then enters the builder's queue, marked From Feedback app) or declines "
@@ -4118,11 +4118,11 @@ def steps_for(view, base=None):
                   'role': f"{base['builder']['name']}'s tester", 'who': builder_who, 'person': False,
                   'about': STEP_TEXT['tester'][view],
                   'next': ('Passed: merged switched on and closed by the builder. Failed: back to Building.' if view == 'bugs'
-                           else 'Passed: merged switched off, then Show-and-tell. Failed: back to Building.')}
+                           else 'Passed: merged switched off, then Final approval. Failed: back to Building.')}
         out = first + [tester]
         if view == 'features':
             sd = base['show_deciders']
-            out.append({'key': 'show', 'n': 4, 'name': 'Show-and-tell', 'group': 'show', 'label': SHOW_LABEL, 'count_label': 'Show-and-tell', 'human': True,
+            out.append({'key': 'show', 'n': 4, 'name': 'Final approval', 'group': 'show', 'label': SHOW_LABEL, 'count_label': 'Final approval', 'human': True,
                         'role': f"{sd['core']} (core repos) · the filer (apps)",
                         'who': [_who(t) for t in base['team'] if t['name'].lower() == sd['core'].lower()], 'person': True,
                         'only': None, 'deciders': {'core': sd['core'], 'apps': 'filer', 'builder_filed': f"filer of the linked item, else {sd['default']}"},

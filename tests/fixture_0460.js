@@ -28,6 +28,9 @@
     try { render(d); } catch (e) { out[v] = { error: String(e && e.stack || e) }; continue; }
     await sleep(50);
     out[v] = read();
+    out[v].closed = el('secs').querySelectorAll('.bd-icard').length;
+    for (const k of out[v].bins.map(b => b.key)) { stage[v] = k; render(d); const r = read(); out[v].heads.push(...r.heads); out[v].cards.push(...r.cards); }
+    stage[v] = null; render(d);
   }
   // the item pop-up's own flow line
   openItem = show; openId = show.id;

@@ -45,7 +45,7 @@ class Steps(unittest.TestCase):
         self.assertEqual([s['key'] for s in st], ['open', 'build', 'tester', 'show'])
         show = st[3]
         # 0.44.0: every feature, core and app (James for core repos, the filer for apps)
-        self.assertEqual((show['name'], show['role'], show['person'], show['only']), ('Show-and-tell', 'James (core repos) · the filer (apps)', True, None))
+        self.assertEqual((show['name'], show['role'], show['person'], show['only']), ('Final approval', 'James (core repos) · the filer (apps)', True, None))   # 0.50.0: its name on the page
         self.assertEqual(show['label'], 'show-and-tell')
         self.assertIn('human step', show['about'])   # 0.46.0: one of two (Pending approval, Show-and-tell)
         self.assertIn('off switch', st[1]['about'])
@@ -127,8 +127,8 @@ const onboxOf = () => null, bugLine = () => ['x', ''], nextLine = () => '';
 console.log(JSON.stringify([myTurn({group: 'test', can_review: true}), myTurn({group: 'show', turn: true}),
   whereLine({group: 'test', category: 'app'})[0], whereLine({group: 'test', category: 'core'})[0], whereLine({group: 'airev'})[0]]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(got, [False, True, 'Tested by the builder · next: show-and-tell for the person who filed it',
-                               'Tested by the builder · next: James’s show-and-tell', 'Older hand-back · the builder moves it on'])
+        self.assertEqual(got, [False, True, 'Tested by the builder · next: final approval by the person who filed it',
+                               'Tested by the builder · next: James’s final approval', 'Older hand-back · the builder moves it on'])
 
     def test_no_check_it_todo_for_bugs(self):
         self.assertNotIn("smallBtn('Check it', () => openDetail(i, true))", JS)

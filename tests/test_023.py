@@ -23,7 +23,7 @@ class OneCatalog(unittest.TestCase):
         self.assertIn('function adoptSwitch(i)', JS)
         self.assertIn('box.byIssue[String(i.id', JS)
         # every view's items adopt, both when the catalog arrives and when a view renders
-        self.assertRegex(JS, r'function render\(d\) \{\n  if \(view === .me.\) return renderMe\(\);\n  if \(d.view !== view\) return;\n  for \(const g of Object.values\(d.groups')
+        self.assertRegex(JS, r'function render\(d\) \{\n  if \(d.view !== view\) return;\n  for \(const g of Object.values\(d.groups')
 
     def test_app_switches_are_not_locked_by_the_channel(self):
         self.assertIn("sw.kind === 'app' ? sw.locked : (box.locked || sw.locked)", JS)

@@ -240,8 +240,11 @@ class Page(unittest.TestCase):
         self.assertNotIn('bd-dec-', CSS)
 
     def test_waiting_on_me_sections(self):
-        self.assertIn("const ME_KINDS = [['approve', 'To approve'], ['answer', 'Questions for you'], ['goals', 'Goals needing a status']];", JS)
-        self.assertIn('function meCount() { return meItems().length; }', JS)
+        # 0.50.0: the same three kinds (myTurn), counted per tab for the orange badges instead of listed on a screen
+        self.assertNotIn('ME_KINDS', JS)
+        self.assertIn('function mineIn(v) {', JS)
+        self.assertIn("if (i.group === 'show') return !!i.turn;", JS)
+        self.assertIn("if (i.group === 'answer') return !!i.turn;", JS)
 
     def test_one_wording(self):
         area = fn('actionArea')

@@ -23,19 +23,16 @@
       <!-- 0.22: one header row: Goals | Core · Apps · Bugs | Builder | + Report | Settings (0.33: ⋯ More). Report or request is the one round
            primary '+' (floating bottom right on phones, a compact '+ Report' top right on wide screens), never a tab. -->
       <header class="bd-hbar" id="bar">
-        <button type="button" class="bd-goals-btn" id="goals-btn" data-view="goals" aria-pressed="false" aria-describedby="goals-n" hidden>
+        <button type="button" class="bd-goals-btn" id="goals-btn" data-view="goals" aria-pressed="false" hidden>
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>
-          <span class="bd-goals-t">Goals</span><b class="bd-goals-n" id="goals-n" hidden></b>
+          <span class="bd-goals-t" id="goals-t">Goals</span><b class="bd-wait-n" data-wait="goals" hidden></b>
         </button>
-        <!-- 0.39.0: Waiting on me: one place for everything that waits on you (to try, questions, approvals, goals, feedback, updates) -->
-        <button type="button" class="bd-goals-btn bd-me-btn" id="me-btn" data-view="me" aria-pressed="false" aria-describedby="me-n" hidden>
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <span class="bd-goals-t">Waiting on me</span><b class="bd-goals-n bd-me-n" id="me-n" hidden></b>
-        </button>
+        <!-- 0.50.0 (Miguel, 21 Nov): no separate Waiting on me screen. An orange count sits on the tab and on the
+             stage that hold what waits on you; a count anywhere else is never a badge (Goals says '8 goals'). -->
         <div class="bd-switch" role="tablist" aria-label="Show" hidden>
-          <button type="button" role="tab" data-view="core" aria-selected="true" aria-label="Core features"><span class="bd-tab-l">Core features</span><span class="bd-tab-s" aria-hidden="true">Core</span></button>
-          <button type="button" role="tab" data-view="apps" aria-selected="false" aria-label="App features"><span class="bd-tab-l">App features</span><span class="bd-tab-s" aria-hidden="true">Apps</span></button>
-          <button type="button" role="tab" data-view="bugs" aria-selected="false" aria-label="Bugs"><span class="bd-tab-l">Bugs</span><span class="bd-tab-s" aria-hidden="true">Bugs</span></button>
+          <button type="button" role="tab" data-view="core" aria-selected="true" aria-label="Core features"><span class="bd-tab-l">Core features</span><span class="bd-tab-s" aria-hidden="true">Core</span><b class="bd-wait-n" data-wait="core" hidden></b></button>
+          <button type="button" role="tab" data-view="apps" aria-selected="false" aria-label="App features"><span class="bd-tab-l">App features</span><span class="bd-tab-s" aria-hidden="true">Apps</span><b class="bd-wait-n" data-wait="apps" hidden></b></button>
+          <button type="button" role="tab" data-view="bugs" aria-selected="false" aria-label="Bugs"><span class="bd-tab-l">Bugs</span><span class="bd-tab-s" aria-hidden="true">Bugs</span><b class="bd-wait-n" data-wait="bugs" hidden></b></button>
         </div>
         <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state" hidden>
           <span class="bd-track" aria-hidden="true"><i></i></span>
@@ -84,7 +81,7 @@
       <div id="board" class="bd-board" hidden>
         <!-- 0.17: a calm stage strip (count and name only; tap one to show just that stage). Timings, targets and the
              return arrows live in Stats. One Filter button (person, repo) and a small Sort menu. -->
-        <div id="lists">
+        <div id="lists" class="bd-pipeonly">
           <div class="bd-flow bd-strip" role="group" aria-label="How work moves"><ol class="bd-steps" id="strip"></ol></div>
           <!-- 0.17.1: stats expand inline under the strip (collapsed by default, remembered per device) -->
           <!-- 0.22: one tools row: Filter, Sort, Stats, and the refresh (how fresh the list is) -->
