@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.53.0
+version: 0.54.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.54.0** (Oscar for Miguel, 22 Nov) **James declines too, and how much work the builder has left.** Next to James approves there is now **James declines** (with an optional reason); the comment names who pressed it on his behalf. Under the header one line says how much work the builder has: 'Builder: about 20 hours of work left · 50 items (35 bugs, 15 features) · 54 done in the last day · 59 new features wait for a yes or no first'. The builder reports what it can take now on every run; the hours are that count divided by what its tester passed in the last 24 hours. `GET /api/builder` has it as `work`.
 
 **0.53.0** (Oscar for Miguel, 22 Nov) **James approves, pressed by anyone, and no Mark done.** Back from 0.38.3 (it went with 0.45.0): on any feature waiting for James's yes or no, everyone else on the team sees a **James approves** button to press once he has said yes. It approves it exactly as his own Approve would (the builder turns it on for everyone), and the comment on the item says who pressed it on his behalf. Only a yes can be pressed for him; it stays his turn, not the presser's. Agents: `board_decide` with `on_behalf: true`. The **Mark done** button is gone from cards: the pipeline closes items itself. Close goal and Reopen stay.
 

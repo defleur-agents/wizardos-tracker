@@ -1393,7 +1393,25 @@ const firstName = x => String(x || '').split(' ')[0];
 
 // ---------- Builder switch (0.13.8): real. The builder checks it before every run; pausing asks first ----------
 let builderOn = false;
+// 0.54.0: 'Builder: about 20 hours of work left · 50 items (35 bugs, 15 features) · 54 done in the last day · 59 new
+// features wait for a yes or no'. Hours = items it can take now / what its tester passed in the last 24 hours.
+function workLine(b) {
+  const p = el('workload'), w = b && b.work;
+  if (!w || !(me && me.connected)) { p.hidden = true; return; }
+  const span = h => h == null ? '' : h < 1 ? 'under an hour' : h < 36 ? `about ${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'}` : `about ${Math.round(h / 24 * 2) / 2} days`;
+  const bits = [];
+  if (!b.running) bits.push('Paused');
+  if (!w.pool) bits.push('Nothing left to build: it is waiting for new work');
+  else bits.push((w.hours != null ? `${cap(span(w.hours))} of work left` : 'Work left') + ` · ${w.pool} item${w.pool === 1 ? '' : 's'} (${w.bugs} bug${w.bugs === 1 ? '' : 's'}, ${w.features} feature${w.features === 1 ? '' : 's'})`);
+  if (w.passed24) bits.push(`${w.passed24} done in the last day`);
+  if (w.held) bits.push(`${w.held} new feature${w.held === 1 ? '' : 's'} wait for a yes or no first`);
+  if (w.stale) bits.push(`last heard from ${when(new Date(w.at * 1000).toISOString())}`);
+  p.replaceChildren(make('b', '', 'Builder: '), document.createTextNode(bits.join(' · ')));
+  p.title = 'From the builder itself: what it can take now, and how many changes its tester passed in the last 24 hours';
+  p.hidden = false;
+}
 function showBuilder(b) {
+  workLine(b);
   builderOn = !!b.running;
   const t = el('builder');
   t.setAttribute('aria-checked', String(builderOn));
@@ -1965,9 +1983,12 @@ function actionArea(i, inDetail) {
     const auto = i.auto_at && !isNaN(new Date(i.auto_at)) ? make('span', 'bd-why-s bd-auto', `Turns on for everyone by itself on ${new Date(i.auto_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} unless declined`) : null;
     if (!i.can_decide && i.can_behalf) {   // 0.53.0: 'James approves', pressed for him; the comment says who pressed it
       const d_ = i.decider || 'James';
-      const yb = smallBtn(`${d_} approves`, b => askPop(b, `Approve on ${d_}\u2019s behalf? Only once he has said yes. The comment on the item says you pressed it.`, `${d_} approves`, () => decideAct(i, 'yes', '', true)));
+      const n_ = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;
+      const yb = smallBtn(`${d_} approves`, b => askPop(b, `Approve on ${d_}\u2019s behalf${n_ > 1 ? ` (all ${n_} parts)` : ''}? Only once he has said yes. The comment on the item says you pressed it.`, `${d_} approves`, () => decideAct(i, 'yes', '', true)));
       yb.classList.add('bd-mini-go');
-      row.append(yb); if (auto) row.append(auto); return row;
+      // 0.54.0: and James declines, with his reason
+      const nb = smallBtn(`${d_} declines`, () => noteAsk(row, `Why did ${d_} say no? (optional)`, `${d_} declines`, note => decideAct(i, 'no', note, true)));
+      row.append(yb, nb); if (auto) row.append(auto); return row;
     }
     if (!i.can_decide) { const said = !!waitHead(i); if (!said) row.append(make('span', 'bd-why-s bd-decides', `${i.decider || 'James'} decides`)); if (auto) row.append(auto); return said && !tg0 && !t0.run && !auto ? null : row; }
     const n = Array.isArray(i.parts) && i.parts.length > 1 ? i.parts.length : 1;   // 0.48.0: a yes or no covers every part of the idea
@@ -2272,7 +2293,7 @@ async function decideAct(i, decision, note, behalf) {
     if (bad.size) {   // 0.48.0: GitHub refused some parts: those come back, and the line says how many
       for (const [d, g, k, x] of took.reverse()) if (bad.has(x.id)) { d.groups[g].splice(Math.min(k, d.groups[g].length), 0, x); if (d.counts) d.counts[g] = onePerIdea(d.groups[g]).length; }
       paint(); say(`Couldn’t save that: ${bad.size} of ${r.parts.length} parts could not be updated.`, 'error');
-    } else toast(behalf ? `Approved for ${i.decider || 'James'}: the builder turns it on for everyone.` : decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
+    } else toast(behalf ? (decision === 'yes' ? `Approved for ${i.decider || 'James'}: the builder turns it on for everyone.` : `Declined for ${i.decider || 'James'}: dropped. The builder removes its switch.`) : decision === 'yes' ? 'Approved: the builder turns it on for everyone.' : 'Declined: dropped. The builder removes its switch.');
     needsBadge();
     return true;
   } catch (err) {
@@ -3641,7 +3662,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.53.0';
+const PAGE_VERSION = '0.54.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3766,7 +3787,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.53.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

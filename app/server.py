@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.53.0'
+VERSION = '0.54.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4413,11 +4413,36 @@ def ai_review_human(*_):
                        'People review in Human review.', 'agents_only')
 
 
-def builder_status(seen=False):
+WORK_KEYS = ('pool', 'bugs', 'features', 'held', 'passed24', 'running')
+
+
+def builder_work():
+    """0.54.0 (Miguel, 22 Nov): how much work the builder has left. The builder reports {pool, bugs, features, held,
+    passed24, running} on its ticks; `hours` = items it can take now / what its tester passed in the last 24 hours."""
+    w = _read('builder_work.json', {})
+    if not isinstance(w, dict) or not w.get('at'):
+        return None
+    out = {k: w.get(k, 0) for k in WORK_KEYS}
+    out['at'] = w['at']
+    rate = out['passed24'] / 24.0
+    out['hours'] = round(out['pool'] / rate, 1) if rate > 0 else None
+    out['stale'] = time.time() - w['at'] > 30 * 60
+    return out
+
+
+def builder_status(seen=False, work=None):
     # 0.13.8: the builder host polls GET /api/builder?from=builder before every run and skips the run when Paused.
     if seen:
         with LOCK:
             _write('builder_seen.json', {'at': int(time.time())})
+    if seen and work:
+        try:
+            w = json.loads(work)
+            w = {k: max(0, min(100000, int(w.get(k) or 0))) for k in WORK_KEYS}
+            with LOCK:
+                _write('builder_work.json', {**w, 'at': int(time.time())})
+        except (ValueError, TypeError, AttributeError):
+            pass
     b = _read('builder.json', {})
     b = b if isinstance(b, dict) else {}
     at = (_read('builder_seen.json', {}) or {}).get('at') or 0
@@ -4425,7 +4450,7 @@ def builder_status(seen=False):
     running = bool(b.get('running', True))
     return {'running': running, 'state': 'Running' if running else 'Paused',
             'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': connected,
-            'last_seen': at or None,
+            'last_seen': at or None, 'work': builder_work(),
             'note': 'Paused: the builder finishes its current run, then picks up nothing new.' if not running
             else 'Running: the builder picks up the next item 30 seconds after each run.'}
 
@@ -5601,8 +5626,9 @@ def decide(person, args, agent=False):
     behalf = bool(args.get('on_behalf')) and me.lower() != decider.lower()
     if behalf:
         # 0.53.0: 'James approves' pressed by someone else on the team: yes only, only for the core decider
-        if decision != 'yes' or decider.lower() != base['show_deciders']['core'].lower() or not on_team(login, base):
-            raise Problem(403, f'Only a yes can be pressed on {base["show_deciders"]["core"]}\u2019s behalf, and only for his items.', 'not_behalf')
+        # 0.54.0: James declines too (Miguel, 22 Nov: 'why would you only put one?')
+        if decider.lower() != base['show_deciders']['core'].lower() or not on_team(login, base):
+            raise Problem(403, f'Only {base["show_deciders"]["core"]}\u2019s items can be decided on his behalf.', 'not_behalf')
     elif not on_team(login, base) or me.lower() != decider.lower():
         raise Problem(403, f'This one is {decider}\u2019s to decide' + (' (or their agent).' if not agent else ', not this agent\u2019s person.'), 'not_decider')
     via = ''
@@ -5989,7 +6015,7 @@ TOOLS = [
     {'name': 'goal_status_get', 'description': "A goal's latest status (status working|blocked|review, words In progress / Blocked / Pending final review, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
     {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has. Pieces of one idea (same switch, or a 'Part of: <repo>#<n>' line) share idea (the root's id) and parts; counts and ideas count ideas, not pieces.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
-    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, 'on_behalf': {'type': 'boolean', 'description': "0.53.0: yes on James's behalf (core items) after he OKed it; the comment names who pressed it."}, **ASKED}, 'required': ['decision', 'owner_request']}},
+    {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, 'on_behalf': {'type': 'boolean', 'description': "0.53.0/0.54.0: yes or no on James's behalf (core items) after he said so; the comment names who pressed it."}, **ASKED}, 'required': ['decision', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -6129,7 +6155,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/done':
                 return self.send(200, done_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/builder':
-                return self.send(200, builder_status(seen=q.get('from') == 'builder'))
+                return self.send(200, builder_status(seen=q.get('from') == 'builder', work=q.get('work') if q.get('from') == 'builder' else None))
             if path == '/api/try':
                 return self.send(200, try_status(self.person()))
             if path == '/api/goal/status':

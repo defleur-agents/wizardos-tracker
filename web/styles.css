@@ -930,6 +930,8 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-shot { font-weight: 600; color: var(--accent); }
 
 /* 0.26.1: Check it = a short check card; the GitHub thread hides behind 'Show the full history' */
+.bd-workload { margin: 0 0 var(--wz-space-2); font-size: var(--wz-text-sm); line-height: 1.45; color: var(--ink-2); }
+.bd-workload b { color: var(--ink); font-weight: 600; }
 .bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
 .bd-checkmode #d-comments-h, .bd-checkmode #d-comments, .bd-checkmode #d-reply:not(.bd-d-reply-ask) { display: none; }
 /* 0.52.0: the card opens on what to do; the summary shows only while the history is folded */
