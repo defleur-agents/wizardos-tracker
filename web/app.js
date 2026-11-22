@@ -1393,22 +1393,20 @@ const firstName = x => String(x || '').split(' ')[0];
 
 // ---------- Builder switch (0.13.8): real. The builder checks it before every run; pausing asks first ----------
 let builderOn = false;
-// 0.54.0: 'Builder: about 20 hours of work left · 50 items (35 bugs, 15 features) · 54 done in the last day · 59 new
-// features wait for a yes or no'. Hours = items it can take now / what its tester passed in the last 24 hours.
+// 0.54.1 (Miguel, 22 Nov: 'too many words, reads like a paragraph'): one small chip, 'Builder · ~33 h of work';
+// a tap shows the few numbers behind it. Hours = items it can take now / what its tester passed in the last 24 hours.
 function workLine(b) {
-  const p = el('workload'), w = b && b.work;
-  if (!w || !(me && me.connected)) { p.hidden = true; return; }
-  const span = h => h == null ? '' : h < 1 ? 'under an hour' : h < 36 ? `about ${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'}` : `about ${Math.round(h / 24 * 2) / 2} days`;
-  const bits = [];
-  if (!b.running) bits.push('Paused');
-  if (!w.pool) bits.push('Nothing left to build: it is waiting for new work');
-  else bits.push((w.hours != null ? `${cap(span(w.hours))} of work left` : 'Work left') + ` · ${w.pool} item${w.pool === 1 ? '' : 's'} (${w.bugs} bug${w.bugs === 1 ? '' : 's'}, ${w.features} feature${w.features === 1 ? '' : 's'})`);
-  if (w.passed24) bits.push(`${w.passed24} done in the last day`);
-  if (w.held) bits.push(`${w.held} new feature${w.held === 1 ? '' : 's'} wait for a yes or no first`);
-  if (w.stale) bits.push(`last heard from ${when(new Date(w.at * 1000).toISOString())}`);
-  p.replaceChildren(make('b', '', 'Builder: '), document.createTextNode(bits.join(' · ')));
-  p.title = 'From the builder itself: what it can take now, and how many changes its tester passed in the last 24 hours';
-  p.hidden = false;
+  const box = el('workload'), w = b && b.work;
+  if (!w || !(me && me.connected)) { box.hidden = true; return; }
+  const h = w.hours, short = !w.pool ? 'out of work' : h == null ? `${w.pool} queued` : h < 1 ? '< 1 h of work' : h < 36 ? `~${Math.round(h)} h of work` : `~${Math.round(h / 24 * 2) / 2} days of work`;
+  const c = make('button', 'bd-work-c' + (!b.running ? ' off' : w.stale ? ' stale' : '')); c.type = 'button';
+  c.append(make('i', 'bd-work-dot'), make('b', '', 'Builder'), make('span', '', !b.running ? 'paused' : short));
+  const row = (k, v) => { const r = make('p', 'bd-work-r'); r.append(make('span', '', k), make('b', '', String(v))); return r; };
+  c.onclick = () => pop(c, 'Builder', [row('Can build now', w.pool), row('Bugs · features', `${w.bugs} · ${w.features}`),
+    row('Done in the last day', w.passed24), row('Waiting for a yes or no', w.held),
+    make('p', 'bd-why-s', w.stale ? `Last heard from ${when(new Date(w.at * 1000).toISOString())}.` : 'Time left = what it can build now ÷ what it finished in the last day.')]);
+  box.replaceChildren(c);
+  box.hidden = false;
 }
 function showBuilder(b) {
   workLine(b);
@@ -3662,7 +3660,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.54.0';
+const PAGE_VERSION = '0.54.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3787,7 +3785,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
