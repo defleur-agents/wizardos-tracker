@@ -2427,6 +2427,27 @@ function safeFragment(html) {
   frag.append(...doc.body.childNodes);
   return frag;
 }
+// 0.52.0 (Miguel, 22 Nov: 'make the massive long history thing easy to read'): the builder's comments read as
+// 'Builder', people by their team name, and anything longer than a few lines is folded to its start with Show all.
+const BOT_RE = /^(app\/)?(wizardosbuilder|wizardos-builder)(\[bot\])?$/i;
+const FOLD_CHARS = 420;
+function foldLong(box) {
+  if ((box.textContent || '').trim().length <= FOLD_CHARS && box.querySelectorAll('pre, table, li').length < 6) return box;
+  box.classList.add('bd-fold');
+  const w = make('div', 'bd-foldw'), b = make('button', 'bd-fold-b', 'Show all'); b.type = 'button';
+  b.onclick = () => { const on = box.classList.toggle('bd-fold'); b.textContent = on ? 'Show all' : 'Show less'; };
+  w.append(box, b);
+  return w;
+}
+// The card's own summary when there is no pitch: the description's first paragraph, in plain words
+function summaryOf(d) {
+  const s = el('d-sum'), i = openItem && openItem.id === d.id ? openItem : d;
+  if (i.group === 'show' && (i.pitch || (ideaOf(i) || {}).pitch)) { s.hidden = true; return s.replaceChildren(); }
+  const t = document.createElement('div'); t.append(safeFragment(d.body_html || ''));
+  const p = [...t.querySelectorAll('p, li')].map(x => x.textContent.trim()).find(x => x.length > 20) || '';
+  s.hidden = !p;
+  s.replaceChildren(...(p ? [make('p', 'bd-sum-t', p.length > 320 ? p.slice(0, 317).replace(/\s+\S*$/, '') + '…' : p)] : []));
+}
 function prose(html, empty) {
   const box = make('div', 'bd-prose');
   if (html && html.trim()) box.append(safeFragment(html)); else if (empty) box.append(make('p', 'bd-meta', empty));
@@ -2468,9 +2489,11 @@ function bugCheckLines(i) {
 }
 function checkMode(on) {
   el('detail').classList.toggle('bd-checkmode', on);
-  el('d-more').hidden = !on;
+  el('d-more').hidden = false;
+  el('d-more').textContent = on ? 'Show details and history' : 'Hide details and history';
+  el('d-more').setAttribute('aria-expanded', String(!on));
 }
-el('d-more').addEventListener('click', () => checkMode(false));
+el('d-more').addEventListener('click', () => checkMode(!el('detail').classList.contains('bd-checkmode')));
 function openDetail(i, toAct) {
   const dlg = el('detail');
   openId = i.id; openItem = i;
@@ -2486,7 +2509,8 @@ function openDetail(i, toAct) {
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'How to see it: ' + cap(tryState(i).has ? stepsAfterToggle(i) : i.steps) : i.check || '';
-  el('d-steps').classList.remove('bd-chkcard'); checkMode(false);
+  el('d-steps').classList.remove('bd-chkcard'); checkMode(true);   // 0.52.0: the history starts folded for every card
+  el('d-sum').hidden = true; el('d-sum').replaceChildren();
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
   detailSwitch(i);
@@ -2554,15 +2578,17 @@ function fill(d) {
   el('d-labels').textContent = (d.labels || []).join(', ');
   roles(d);
   el('d-gh').href = d.url;
-  el('d-body').replaceChildren(prose(d.body_html, 'No description.'));
+  el('d-body').replaceChildren(foldLong(prose(d.body_html, 'No description.')));
+  summaryOf(d);
   const cs = d.comments || [];
   el('d-comments-h').hidden = !cs.length;
   el('d-n-comments').textContent = cs.length + (d.comments_total > cs.length ? ` of ${d.comments_total}` : '');
   el('d-comments').replaceChildren(...cs.map(c => {
-    const li = make('li', 'bd-comment');
+    const bot = BOT_RE.test(c.author || '');
+    const li = make('li', 'bd-comment' + (bot ? ' bd-comment-bot' : ''));
     const head = make('p', 'bd-meta');
-    head.append(make('b', 'bd-author', c.author || 'someone'), document.createTextNode(' · ' + when(c.created_at)));
-    li.append(head, prose(c.body_html, ''));
+    head.append(make('b', 'bd-author', bot ? 'Builder' : nameOf(c.author) || c.author || 'someone'), document.createTextNode(' · ' + when(c.created_at)));
+    li.append(head, foldLong(prose(c.body_html, '')));
     return li;
   }));
   for (const x of pendingReplies.get(d.id) || []) el('d-comments').append(x.li);   // still sending or unsent: keep it showing
@@ -2623,6 +2649,7 @@ function replyBox(i, toAct) {
   f.hidden = !signed;
   if (!signed) return;
   const answer = i.group === 'answer';
+  f.classList.toggle('bd-d-reply-ask', answer);   // 0.52.0: only an answer to the builder stays above the fold
   el('d-reply-l').textContent = answer ? 'Answer the builder' : 'Add a comment';
   ta.placeholder = answer ? 'Your answer (it goes on the item as a comment)' : 'Write a comment';
   el('d-reply-n').textContent = 'Posted on GitHub as ' + myLogin() + '.' + (answer ? ' The builder carries on within 10 minutes.' : '');
@@ -2769,12 +2796,18 @@ function detailGoal(i, d) {
 function detailAct(i) {
   const a = el('d-act');
   const area = i && i.kind !== 'goal' && view !== 'goals' ? actionArea(i, true) : null;
-  if (!area) { a.hidden = true; return a.replaceChildren(); }
+  const pitch = i && i.group === 'show' ? showTell(i) : [];   // 0.52.0: the same pitch and pictures as its card
+  if (!area && !pitch.length) {
+    // 0.52.0: opened from a link before its tab's list is in: say so instead of an empty top
+    if (i && !i.group && i.stage && i.state !== 'closed' && i.type !== 'goal') { a.hidden = false; return a.replaceChildren(make('p', 'bd-meta', 'Loading what it needs…')); }
+    a.hidden = true; return a.replaceChildren();
+  }
   a.hidden = false;
   const [text] = whereLine(i);
   const wh = waitHead(i);
   const chk = i.kind === 'bug' && i.shipped;
-  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', chk ? 'Does it work now?' : wh ? wh.textContent : (text || 'Next')), area);
+  const head = i.group === 'show' ? (i.can_decide ? 'Your yes or no' : `Final approval · ${i.decider || 'James'} decides`) : chk ? 'Does it work now?' : wh ? wh.textContent : (text || 'Next');
+  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', head), ...pitch, ...(area ? [area] : []));
   const ob = el('d-onbox');
   onceOnly(a, 'Not released yet', !!(ob && !ob.hidden && ob.textContent.includes('Not released yet')));
 }
@@ -3601,7 +3634,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.51.0';
+const PAGE_VERSION = '0.52.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3726,7 +3759,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.51.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.52.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3750,6 +3783,11 @@ function linkRestored() {
   return shown === location.hash || (shown === null && tappedIn === false);
 }
 function linkDone() { if (ITEM_RE.test(location.hash)) { try { history.replaceState(null, '', '#' + view); } catch (_) {} } }
+// 0.52.0 (Miguel, 22 Nov): a chat link opened the bare GitHub copy (no Approve / Decline, no pitch) whenever the card's
+// tab was already the open tab; wait for that tab's list (up to 45 s) so the card becomes the real one.
+function listIn(w) {
+  return new Promise(ok => { const t0 = Date.now(); (function look() { if ((cache[w] && cache[w].groups) || Date.now() - t0 > 45000) return ok(); setTimeout(look, 300); })(); });
+}
 async function openLinked(fresh) {
   const m = ITEM_RE.exec(location.hash); if (!m) return;
   if (fresh && linkRestored()) return linkDone();
@@ -3765,6 +3803,7 @@ async function openLinked(fresh) {
     const first = find(want || view);
     openDetail(first || got);
     if (want && want !== view) { view = want; markView(); await load(view); }
+    else if (!first) await listIn(want || view);   // 0.52.0: the tab was already this one, so nothing waited for its list
     const hit = find(view);
     if (hit && !first && openId === id && el('detail').open) openDetail(hit);
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }

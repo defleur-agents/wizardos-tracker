@@ -931,7 +931,16 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 
 /* 0.26.1: Check it = a short check card; the GitHub thread hides behind 'Show the full history' */
 .bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
-.bd-checkmode #d-comments-h, .bd-checkmode #d-comments { display: none; }
+.bd-checkmode #d-comments-h, .bd-checkmode #d-comments, .bd-checkmode #d-reply:not(.bd-d-reply-ask) { display: none; }
+/* 0.52.0: the card opens on what to do; the summary shows only while the history is folded */
+.bd-detail:not(.bd-checkmode) #d-sum { display: none; }
+.bd-d-sum .bd-sum-t { margin: var(--wz-space-2) 0 0; font-size: var(--wz-text-md); line-height: 1.5; color: var(--ink-2); }
+.bd-d-act .bd-pitch { margin: 0 0 var(--wz-space-2); }
+.bd-d-act .bd-thumbs { margin-bottom: var(--wz-space-3); }
+.bd-fold { max-height: 9em; overflow: hidden; mask-image: linear-gradient(to bottom, black 55%, transparent); -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent); }
+.bd-fold-b { margin: 4px 0 0; padding: 0; border: 0; background: none; font: inherit; font-size: var(--wz-text-sm); font-weight: 600; color: var(--accent); cursor: pointer; }
+.bd-comment-bot { background: transparent; }
+.bd-comment-bot .bd-author { color: var(--ink-2); }
 .bd-d-steps.bd-chkcard { display: grid; gap: var(--wz-space-3); color: var(--ink); }
 .bd-chk-h { margin: 0 0 2px; font-size: var(--wz-text-sm); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
 .bd-chk-t { margin: 0; font-size: var(--wz-text-md, var(--wz-text-sm)); line-height: 1.5; color: var(--ink); }

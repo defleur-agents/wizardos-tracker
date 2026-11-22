@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.51.0
+version: 0.52.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.52.0** (Oscar for Miguel, 22 Nov) **A card opens on what to do.** Tapping a card, or a link to one from a chat, opens straight on the part that needs you: for a feature at Final approval its two-line pitch, Before / After pictures, Try it, and Approve / Decline, the same as its card in the list. The description, stage timeline and comments are folded under one **Show details and history** button, with a short summary in their place when there's no pitch. In the history, the builder's comments read as Builder and people by their team names, and any long description or comment shows its first lines with **Show all**. Fixed: a chat link to a card whose tab was already open showed only the GitHub thread and never the Approve / Decline part, because it didn't wait for that tab's list.
 
 **0.51.0** (Oscar for Miguel, asked 21-22 Nov) **Your own ideas turn on by themselves after 7 days, and a closed card stays closed.** An idea waiting at Final approval that was filed by the same person who approves it is now approved automatically 7 days after it got there, unless it is declined first, the way a shipped bug closes after 7 quiet days. Its card says the date ('Turns on for everyone by itself on 29 Nov unless declined'). The 7 days count from 22 Nov at the earliest, so nothing turns on in the first week; an idea someone else filed never approves itself. The builder does the approving, so the item shows it was automatic. Also fixed: a card opened from a link in a chat came back every time Wizard was refreshed, because Wizard keeps the last link it opened in the Tracker's window. A link now opens its card once; after that a refresh shows the pipeline, and tapping the same link again opens the card again.
 
