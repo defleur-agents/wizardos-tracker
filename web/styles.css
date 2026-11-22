@@ -898,6 +898,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   gap: var(--wz-space-3, 12px); flex-wrap: wrap; padding: 10px 14px; border-radius: 14px;
   background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .bd-selfupd[hidden] { display: none; }
+/* 0.54.2: the small always-there pill */
+.bd-selfupd.bd-selfupd-min { padding: 0; border: 0; background: none; justify-content: flex-start; }
+.bd-updpill { display: inline-flex; align-items: center; gap: 8px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--fill); font-size: var(--wz-text-sm); color: var(--ink); }
+.bd-updpill .bd-work-dot { background: var(--accent); }
+.bd-updpill.bad .bd-work-dot { background: var(--bd-warn); }
+.bd-updpill-t { font-weight: 600; white-space: nowrap; }
+.bd-updpill .bd-mini { min-height: 28px; padding: 0 12px; }
+.bd-updpill-more { border: 0; background: none; font: inherit; font-size: var(--wz-text-md); line-height: 1; padding: 4px 8px; color: var(--ink-2); cursor: pointer; }
 .bd-selfupd-t { font-weight: 650; }
 .bd-selfupd-go { min-height: 44px; font-weight: 700; }
 .bd-selfupd .bd-upd { flex: 1 1 100%; margin: 0; }
