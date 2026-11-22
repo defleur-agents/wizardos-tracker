@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.50.1'
+VERSION = '0.51.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3160,6 +3160,7 @@ def board_split(person, args):
             extra = {'decider': dec, 'can_decide': mine_dec, 'can_james': False, 'james_rule': '', 'turn': mine_dec}
             pieces = [listed[x.lower()] for x in idea['parts']] if idea else []
             extra['idea'] = idea['idea'] if idea else iid
+            extra['auto_at'] = idea.get('auto_at') if idea else None   # 0.51.0: approved by itself then, unless declined
             extra['parts'] = ([{k: x.get(k) for k in ('id', 'repo', 'number', 'title', 'url')} for x in pieces]
                               or [{'id': iid, 'repo': repo, 'number': n['number'], 'title': n.get('title'), 'url': n.get('url')}])
             if len(pieces) > 1:
@@ -4207,6 +4208,9 @@ def policy(person=None):
                                                        'decider': 'the person who filed it (agent -> its person; builder bot -> '
                                                                   f"the linked item's filer, else {base['show_deciders']['default']})",
                                                        'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove', 'closed_by': 'builder'},
+                                               'auto_approve': {'who': 'an idea whose every piece was filed by the person who approves it',
+                                                                'seconds': SHOW_AUTO_SECONDS, 'since': SHOW_AUTO_SINCE, 'by': 'builder',
+                                                                'queue': 'GET /api/decisions?for=all (auto_due)', 'stops': 'Decline'},
                                                'core': {'switch': f"off until {base['show_deciders']['core']} says yes", 'then': SHOW_LABEL,
                                                         'person': base['show_deciders']['core'], 'decider': base['show_deciders']['core'],
                                                         'yes': DEFAULT_LABEL, 'no': 'dropped + switch-remove', 'closed_by': 'builder'},
@@ -5281,6 +5285,31 @@ def show_pitch(builder_bodies, issue_body=None):
 
 
 DECIDE_Q = 'label:"show-and-tell" -label:goal'
+# 0.51.0 (Miguel, 21-22 Nov 2026: "items people filed themselves turn on by themselves after 7 days if nobody says no",
+# the way a shipped bug closes after 7 quiet days). An idea whose every piece was filed by the person who approves it
+# is approved automatically SHOW_AUTO_SECONDS after its newest piece reached final approval; the clock starts no
+# earlier than the rule (SHOW_AUTO_SINCE), so nothing turns on in the rule's first week. A Decline, or anything that
+# takes it out of the stage, stops it. The Tracker only says when (`auto_at`, `auto_due` in GET /api/decisions and on
+# the card); the builder's sweep does it, as the builder, with the labels of an Approve.
+SHOW_AUTO_SECONDS = 7 * 86400
+SHOW_AUTO_SINCE = '2026-11-22T00:00:00Z'
+DECIDE_PAGE = ('query($q: String!, $after: String) { ' + _PAGE % (40, HEAVY_FIELDS + ' stages: timelineItems(itemTypes: [LABELED_EVENT], last: 100)'
+               ' { nodes { ... on LabeledEvent { createdAt label { name } } } }') + ' }')
+
+
+def show_since(node):
+    """When this item last got the show-and-tell label (ISO), from the `stages` its read asked for; None if unknown."""
+    at = [e.get('createdAt') for e in ((node or {}).get('stages') or {}).get('nodes') or []
+          if e and ((e.get('label') or {}).get('name') or '').lower() == SHOW_LABEL and _ts(e.get('createdAt'))]
+    return max(at, key=_ts) if at else None
+
+
+def show_auto_at(members, decider):
+    """ISO time an idea is approved by itself, or None: every piece filed by its decider and each one's `since` known."""
+    if not members or not all((m.get('opener') or '').lower() == (decider or '').lower() and _ts(m.get('since')) for m in members):
+        return None
+    at = max(max(_ts(m['since']) for m in members), _ts(SHOW_AUTO_SINCE)) + SHOW_AUTO_SECONDS
+    return datetime.fromtimestamp(at, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 # ---------- 0.48.0 (Miguel, 21 Nov 2026): one idea, one yes or no ----------
@@ -5349,7 +5378,8 @@ def idea_groups(items, base=None, gone=()):
         if not live:
             continue
         dec = core if len(members) > 1 and any(is_core(m['repo'], base) for m in members) else members[0]['decider']
-        info = {'idea': live[0]['id'], 'parts': [m['id'] for m in live], 'all': [m['id'] for m in members], 'decider': dec}
+        info = {'idea': live[0]['id'], 'parts': [m['id'] for m in live], 'all': [m['id'] for m in members], 'decider': dec,
+                'auto_at': show_auto_at(members, dec)}
         for m in live:
             out[m['id'].lower()] = info
     return out
@@ -5367,7 +5397,8 @@ def _show_items(acct, base, refresh=False):
             return hit[1]
         org = settings()['org']
         try:
-            nodes, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {DECIDE_Q} sort:created-asc', heavy=True, limit=200)
+            nodes, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {DECIDE_Q} sort:created-asc', heavy=True, limit=200,
+                                   query=DECIDE_PAGE)
         except Problem:
             if hit and not refresh:
                 return hit[1]   # GitHub is limited or down: the last list, so ideas stay joined
@@ -5387,7 +5418,7 @@ def _show_items(acct, base, refresh=False):
                           'url': n.get('url'), 'category': 'core' if is_core(repo, base) else 'app',
                           'decider': show_decider(repo, author, n.get('body'), base, look),
                           'opener': filer_person(repo, author, n.get('body'), base, look) or person_of(author, base),
-                          'created_at': n.get('createdAt'), 'switch': sw or how, **show_pitch(said, n.get('body')),
+                          'created_at': n.get('createdAt'), 'since': show_since(n), 'switch': sw or how, **show_pitch(said, n.get('body')),
                           # a stranger's comment never joins anything: the team, their agents and the builder only
                           '_part_of': part_of_refs([n.get('body')] + [b for w, b in rows if on_team(w, base) or is_builder_login(w, base)], org)})
         with LOCK:
@@ -5420,7 +5451,9 @@ def decisions(person, args=None, agent=False):
     each {id, repo, number, title, url, category, decider, opener, pitch, before, after, switch}. ?for=<name> lists that
     person's queue (read-only), ?for=all everyone's; `counts` is {person: n} for the whole team.
     0.48.0: each item also has `idea` (its idea's root id) and `parts` (ids of every piece, root first) and its decider
-    is the idea's; `counts` counts ideas, not pieces; `ideas` is how many ideas the listed items make."""
+    is the idea's; `counts` counts ideas, not pieces; `ideas` is how many ideas the listed items make.
+    0.51.0: `since` (when it reached final approval), `auto_at` (ISO: a self-filed idea is approved by itself then,
+    else null) and `auto_due` (that time has come: the builder's sweep approves it)."""
     args = args or {}
     _, acct = account_for(person, agent)
     base = policy_base()
@@ -5434,7 +5467,8 @@ def decisions(person, args=None, agent=False):
     for i in items:
         g = ideas[i['id'].lower()]
         rows.append({**{k: v for k, v in i.items() if not k.startswith('_')}, 'decider': g['decider'], 'idea': g['idea'],
-                     'parts': list(g['parts'])})
+                     'parts': list(g['parts']), 'auto_at': g.get('auto_at'),
+                     'auto_due': bool(g.get('auto_at')) and now >= _ts(g['auto_at'])})
     want = str(args.get('for') or me or '').strip()
     counts = {}
     for g in {g['idea']: g for g in ideas.values()}.values():
